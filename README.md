@@ -13,7 +13,7 @@ The Pythia was the priestess at the Oracle of Delphi &mdash; engineers and kings
 
 ## Quickstart
 
-Get Pythia running in your Slack workspace in about five minutes. You need a Slack workspace where you can install apps, an [OpenRouter](https://openrouter.ai) account ($5 of free credit usually included), and [`uv`](https://docs.astral.sh/uv/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+Get Pythia running in your Slack workspace in about five minutes. You need a Slack workspace where you can install apps, an API key for an LLM (anything OpenAI-compatible &mdash; OpenAI, OpenRouter, Azure, Anthropic via OpenAI compat, a local Ollama, &hellip;), and [`uv`](https://docs.astral.sh/uv/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
 
 ### 1. Create the Slack app
 
@@ -24,7 +24,7 @@ Get Pythia running in your Slack workspace in about five minutes. You need a Sla
 
 ### 2. Get an LLM API key
 
-Sign up at <https://openrouter.ai/keys> and create an API key. (Or use any OpenAI-compatible endpoint &mdash; OpenAI, Azure, Ollama, etc. See [Configuration](#configuration).)
+Use whichever provider you already have. The `.env` block below assumes [OpenRouter](https://openrouter.ai/keys) (one key, hundreds of models, usually a few dollars of free credit) but anything OpenAI-compatible works &mdash; just point `OPENAI_BASE_URL` and `OPENAI_MODEL` at your provider. See [Configuration](#configuration) for the common combinations.
 
 ### 3. Clone, configure, run
 

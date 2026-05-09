@@ -89,9 +89,19 @@ Pythia loads MCP servers from a JSON file in [Claude Desktop's `mcpServers` shap
 }
 ```
 
-Point `MCP_SERVERS_CONFIG` at the file, mount it into the container, and the agent will start the servers on boot and expose their tools to the LLM. Stdio servers inherit Pythia's environment, so anything you put in `env:` is added on top of (and overrides) what's already there.
+Point `MCP_SERVERS_CONFIG` at the file, mount it into the container, and the agent will start the servers on boot and expose their tools to the LLM.
 
-If two servers expose tools with the same name, add `"tool_prefix": "dd"` (or similar) to the server entry to disambiguate.
+`${VAR_NAME}` and `${VAR_NAME:-default}` references inside the JSON are expanded from Pythia's environment at load time, so you can keep secrets out of the file:
+
+```json
+"datadog": {
+  "command": "uvx",
+  "args": ["mcp-server-datadog"],
+  "env": { "DD_API_KEY": "${DD_API_KEY}", "DD_APP_KEY": "${DD_APP_KEY}" }
+}
+```
+
+The dict key (e.g. `"datadog"`) becomes the server's `tool_prefix` automatically, so `search` from `datadog` and `search` from another server won't collide.
 
 ## Slack app setup
 

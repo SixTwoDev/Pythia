@@ -1,12 +1,26 @@
-from collections.abc import Callable, Sequence
+import logging
+import time
+from collections.abc import AsyncIterable, Callable, Sequence
 from pathlib import Path
+from typing import Any
 
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer, load_mcp_servers
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    HandleResponseEvent,
+)
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
 from pythia.config import Settings
+
+logger = logging.getLogger(__name__)
+
+_LOG_VALUE_LIMIT = 200
+_tool_call_started_at: dict[str, float] = {}
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are Pythia, an assistant in a Slack workspace. You help engineers investigate questions \
@@ -32,6 +46,39 @@ def _mcp_servers(settings: Settings) -> list[MCPServer]:
     return list(load_mcp_servers(settings.mcp_servers_config))
 
 
+def _truncate(value: object, limit: int = _LOG_VALUE_LIMIT) -> str:
+    text = str(value)
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "…"
+
+
+def _log_event(event: AgentStreamEvent | HandleResponseEvent) -> None:
+    if isinstance(event, FunctionToolCallEvent):
+        _tool_call_started_at[event.part.tool_call_id] = time.monotonic()
+        logger.info("tool call → %s(%s)", event.part.tool_name, _truncate(event.part.args))
+    elif isinstance(event, FunctionToolResultEvent):
+        part = event.part
+        started = _tool_call_started_at.pop(part.tool_call_id, None)
+        elapsed = f"{(time.monotonic() - started) * 1000:.0f}ms" if started else "?"
+        outcome = getattr(part, "outcome", "retry")
+        logger.info(
+            "tool result ← %s [%s] %s (%s)",
+            part.tool_name or "?",
+            outcome,
+            _truncate(part.content),
+            elapsed,
+        )
+
+
+async def _log_events(
+    _ctx: Any,
+    events: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
+) -> None:
+    async for event in events:
+        _log_event(event)
+
+
 def build_agent(
     settings: Settings,
     *,
@@ -44,6 +91,7 @@ def build_agent(
         system_prompt=_system_prompt(settings),
         toolsets=_mcp_servers(settings),
         tools=list(extra_tools),
+        event_stream_handler=_log_events,
     )
 
 

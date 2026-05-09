@@ -13,6 +13,13 @@ SEARCH_MAX_RESULTS = 50
 SEARCH_MAX_PER_FILE = 10
 READ_DEFAULT_LINES = 400
 
+# Files we look for at the root of each cloned repo to ground the agent in
+# the project's conventions. First match wins per repo. Order is intentional:
+# CLAUDE.md is the most opinionated and detailed when present; AGENTS.md is
+# the cross-tool fallback.
+GROUNDING_DOC_CANDIDATES = ("CLAUDE.md", "AGENTS.md")
+GROUNDING_DOC_MAX_CHARS = 6000
+
 
 @dataclass(frozen=True)
 class RepoSpec:
@@ -88,6 +95,28 @@ async def clone_all(specs: list[RepoSpec], base_dir: Path) -> dict[str, Repo]:
         return {}
     results = await asyncio.gather(*(clone_repo(s, base_dir) for s in specs))
     return {r.name: r for r in results}
+
+
+def read_grounding_docs(repos: dict[str, Repo]) -> str:
+    """Read the first matching CLAUDE.md / AGENTS.md from each repo and join
+    them into a single grounding section the agent can read at startup.
+
+    Each file is capped at ~6k chars so a few large guides don't dominate the
+    context window. Empty string when no repo has any of these files.
+    """
+    sections: list[str] = []
+    for name, repo in repos.items():
+        for filename in GROUNDING_DOC_CANDIDATES:
+            path = repo.local_path / filename
+            if not path.is_file():
+                continue
+            content = path.read_text(encoding="utf-8", errors="replace").strip()
+            if len(content) > GROUNDING_DOC_MAX_CHARS:
+                content = content[:GROUNDING_DOC_MAX_CHARS] + "\n\n[…truncated]"
+            sections.append(f"## {name} ({filename})\n\n{content}")
+            logger.info("loaded grounding doc %s/%s (%d chars)", name, filename, len(content))
+            break
+    return "\n\n---\n\n".join(sections)
 
 
 def build_codebase_tools(repos: dict[str, Repo]) -> list[Callable[..., object]]:

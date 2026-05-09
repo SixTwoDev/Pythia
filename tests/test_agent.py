@@ -71,6 +71,19 @@ def test_build_agent_attaches_no_mcp_servers_when_no_config_set() -> None:
     assert _mcp_toolsets(agent) == []
 
 
+def test_build_agent_appends_grounding_docs_to_the_system_prompt() -> None:
+    agent = build_agent(_settings(), grounding_docs="## api (CLAUDE.md)\n\nuse tabs")
+    instructions = list(agent._system_prompts)
+    assert any("Codebase context" in p for p in instructions)
+    assert any("use tabs" in p for p in instructions)
+
+
+def test_build_agent_does_not_add_grounding_section_when_empty() -> None:
+    agent = build_agent(_settings(), grounding_docs="")
+    instructions = list(agent._system_prompts)
+    assert not any("Codebase context" in p for p in instructions)
+
+
 @pytest.mark.asyncio
 async def test_answer_runs_the_agent_and_returns_its_output_as_a_string() -> None:
     agent = build_agent(_settings())

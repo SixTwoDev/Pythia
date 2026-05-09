@@ -7,11 +7,13 @@ import pytest
 
 from pythia import codebase as codebase_module
 from pythia.codebase import (
+    GROUNDING_DOC_MAX_CHARS,
     Repo,
     RepoSpec,
     build_codebase_tools,
     clone_repo,
     parse_repos,
+    read_grounding_docs,
     require_binaries,
 )
 
@@ -182,3 +184,73 @@ async def test_read_file_rejects_unknown_repo(fake_repo: Repo) -> None:
     read = _tool("read_file", fake_repo)
     out = await read("nope", "any.py")
     assert "unknown repo 'nope'" in out
+
+
+def _repo_with_files(tmp_path: Path, name: str, files: dict[str, str]) -> Repo:
+    root = tmp_path / name
+    root.mkdir()
+    for filename, content in files.items():
+        (root / filename).write_text(content, encoding="utf-8")
+    return Repo(name=name, url="fake://", local_path=root)
+
+
+def test_read_grounding_docs_returns_empty_when_no_repos_configured() -> None:
+    assert read_grounding_docs({}) == ""
+
+
+def test_read_grounding_docs_returns_empty_when_no_repo_has_grounding_files(
+    tmp_path: Path,
+) -> None:
+    repos = {"r": _repo_with_files(tmp_path, "r", {"README.md": "just a readme"})}
+    assert read_grounding_docs(repos) == ""
+
+
+def test_read_grounding_docs_picks_up_claude_md(tmp_path: Path) -> None:
+    repos = {"r": _repo_with_files(tmp_path, "r", {"CLAUDE.md": "use tabs not spaces"})}
+    out = read_grounding_docs(repos)
+    assert "## r (CLAUDE.md)" in out
+    assert "use tabs not spaces" in out
+
+
+def test_read_grounding_docs_falls_back_to_agents_md_when_claude_md_absent(
+    tmp_path: Path,
+) -> None:
+    repos = {"r": _repo_with_files(tmp_path, "r", {"AGENTS.md": "agent guide here"})}
+    out = read_grounding_docs(repos)
+    assert "## r (AGENTS.md)" in out
+    assert "agent guide here" in out
+
+
+def test_read_grounding_docs_prefers_claude_md_over_agents_md_when_both_exist(
+    tmp_path: Path,
+) -> None:
+    repos = {
+        "r": _repo_with_files(
+            tmp_path, "r", {"CLAUDE.md": "claude wins", "AGENTS.md": "should be skipped"}
+        )
+    }
+    out = read_grounding_docs(repos)
+    assert "claude wins" in out
+    assert "should be skipped" not in out
+    assert "AGENTS.md" not in out
+
+
+def test_read_grounding_docs_concatenates_one_per_repo_with_separators(
+    tmp_path: Path,
+) -> None:
+    repos = {
+        "api": _repo_with_files(tmp_path, "api", {"CLAUDE.md": "api conventions"}),
+        "web": _repo_with_files(tmp_path, "web", {"AGENTS.md": "web conventions"}),
+    }
+    out = read_grounding_docs(repos)
+    assert "## api (CLAUDE.md)" in out
+    assert "## web (AGENTS.md)" in out
+    assert "---" in out  # the separator between sections
+
+
+def test_read_grounding_docs_truncates_files_above_the_size_cap(tmp_path: Path) -> None:
+    huge = "x" * (GROUNDING_DOC_MAX_CHARS + 1000)
+    repos = {"r": _repo_with_files(tmp_path, "r", {"CLAUDE.md": huge})}
+    out = read_grounding_docs(repos)
+    assert "[…truncated]" in out
+    assert len(out) < GROUNDING_DOC_MAX_CHARS + 500

@@ -1,4 +1,5 @@
 import re
+from collections.abc import Sequence
 
 # Slack's mrkdwn dialect differs from standard Markdown / CommonMark in a few
 # ways that LLM output trips over: *bold* uses single asterisks (not **bold**),
@@ -43,3 +44,37 @@ def to_slack_mrkdwn(text: str) -> str:
         text = text.replace(f"\x00CODE{index}\x00", code)
 
     return text
+
+
+_MAX_TRACE_LINE = 120
+
+
+def _sanitize_trace_segment(value: str) -> str:
+    """Make a tool name or args string safe to embed in a fenced code block on
+    a single line.
+
+    - Newlines and tabs collapse to a single space so each call stays one line.
+    - Triple backticks are split with zero-width spaces so the surrounding
+      ```fence``` doesn't get closed early by an LLM-supplied arg.
+    """
+    cleaned = value.replace("\r\n", " ").replace("\n", " ").replace("\r", " ").replace("\t", " ")
+    return cleaned.replace("```", "`​`​`")
+
+
+def format_tool_trace(calls: "Sequence[object]") -> str:
+    """Render a list of ToolCall objects as plain `name(args)` lines.
+
+    Each line is capped at ~120 chars so noisy MCP tools (long URLs, big
+    JSON args) don't dominate the modal. Order preserved so the trace
+    reads top-to-bottom in call order. Segments are sanitized so embedded
+    newlines or backticks can't break the per-line / code-fence rendering.
+    """
+    lines: list[str] = []
+    for call in calls:
+        name = _sanitize_trace_segment(str(getattr(call, "name", "?")))
+        args = _sanitize_trace_segment(str(getattr(call, "args", "")))
+        line = f"{name}({args})"
+        if len(line) > _MAX_TRACE_LINE:
+            line = line[: _MAX_TRACE_LINE - 1] + "…"
+        lines.append(line)
+    return "\n".join(lines)

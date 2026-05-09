@@ -85,11 +85,12 @@ def test_build_agent_does_not_add_grounding_section_when_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_answer_runs_the_agent_and_returns_its_output_as_a_string() -> None:
+async def test_answer_runs_the_agent_and_returns_text_with_tool_call_list() -> None:
     agent = build_agent(_settings())
     with agent.override(model=TestModel(custom_output_text="hello from pythia")):
         reply = await answer(agent, "any prompt")
-    assert reply == "hello from pythia"
+    assert reply.text == "hello from pythia"
+    assert reply.tool_calls == []
 
 
 def test_truncate_returns_short_values_unchanged() -> None:

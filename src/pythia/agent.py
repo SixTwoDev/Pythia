@@ -1,6 +1,8 @@
+import json
 import logging
 import time
 from collections.abc import AsyncIterable, Callable, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -11,6 +13,7 @@ from pydantic_ai.messages import (
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     HandleResponseEvent,
+    ToolCallPart,
 )
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -111,6 +114,34 @@ def build_agent(
     )
 
 
-async def answer(agent: Agent[None, str], prompt: str) -> str:
+@dataclass(frozen=True)
+class ToolCall:
+    name: str
+    args: str  # already-formatted for display
+
+
+@dataclass(frozen=True)
+class AgentReply:
+    text: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
+
+
+def _format_args(args: object) -> str:
+    if args is None:
+        return ""
+    if isinstance(args, str):
+        return args
+    try:
+        return json.dumps(args, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return str(args)
+
+
+async def answer(agent: Agent[None, str], prompt: str) -> AgentReply:
     result = await agent.run(prompt)
-    return str(result.output)
+    calls: list[ToolCall] = []
+    for message in result.all_messages():
+        for part in getattr(message, "parts", []):
+            if isinstance(part, ToolCallPart):
+                calls.append(ToolCall(name=part.tool_name, args=_format_args(part.args)))
+    return AgentReply(text=str(result.output), tool_calls=calls)

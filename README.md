@@ -5,25 +5,55 @@
 
 An open-source Slack bot that connects an LLM to arbitrary [MCP](https://modelcontextprotocol.io) servers. Mention Pythia in Slack and it answers using whatever tools you've configured. Stateless, single container, configured by environment variables.
 
+## Who's Pythia?
+
+The Pythia was the priestess at the Oracle of Delphi &mdash; engineers and kings would walk up the mountain with hard questions and come back down with answers drawn from sources they couldn't reach themselves. This bot does the same job in Slack: ask in plain English and Pythia goes off to your codebase, your Jira, your Datadog, your GitHub &mdash; whatever MCP servers you've configured &mdash; and comes back with an answer.
+
+(The name also nods to Python, the serpent slain at Delphi that gave the Pythia her title &mdash; and the language Pythia is written in.)
+
+## Quickstart
+
+Get Pythia running in your Slack workspace in about five minutes. You need a Slack workspace where you can install apps, an API key for an LLM (anything OpenAI-compatible &mdash; OpenAI, OpenRouter, Azure, Anthropic via OpenAI compat, a local Ollama, &hellip;), and [`uv`](https://docs.astral.sh/uv/) installed (`curl -LsSf https://astral.sh/uv/install.sh | sh`).
+
+### 1. Create the Slack app
+
+1. Go to <https://api.slack.com/apps> &rarr; **Create New App** &rarr; **From a manifest** &rarr; pick your workspace.
+2. Paste the contents of [`slack-app-manifest.json`](slack-app-manifest.json) &rarr; **Next** &rarr; **Create**.
+3. **Basic Information** &rarr; **App-Level Tokens** &rarr; **Generate Token and Scopes** &rarr; name it anything, add scope `connections:write`, **Generate**. Copy the `xapp-...` token.
+4. **Install App** &rarr; **Install to Workspace** &rarr; **Allow**. Copy the **Bot User OAuth Token** (`xoxb-...`).
+
+### 2. Get an LLM API key
+
+Use whichever provider you already have. The `.env` block below assumes [OpenRouter](https://openrouter.ai/keys) (one key, hundreds of models, usually a few dollars of free credit) but anything OpenAI-compatible works &mdash; just point `OPENAI_BASE_URL` and `OPENAI_MODEL` at your provider. See [Configuration](#configuration) for the common combinations.
+
+### 3. Clone, configure, run
+
+```sh
+git clone git@github.com:SixTwoDev/Pythia.git
+cd Pythia
+uv sync
+
+cat > .env <<'EOF'
+SLACK_BOT_TOKEN=xoxb-PASTE_YOURS_HERE
+SLACK_APP_TOKEN=xapp-PASTE_YOURS_HERE
+OPENAI_API_KEY=PASTE_YOURS_HERE
+OPENAI_MODEL=anthropic/claude-sonnet-4.5
+EOF
+
+uv run pythia
+```
+
+In Slack, invite Pythia to a channel (`/invite @Pythia`) and mention it: `@Pythia hello?` &mdash; you should get a reply within a few seconds.
+
+That's the whole bot. To make it useful, plug in [MCP servers](#mcp-servers) (Jira, Datadog, GitHub, &hellip;) and let it [read your codebase](#codebase-access).
+
 ## Why
 
 If you've configured Jira, Datadog, GitHub, or any other MCP server somewhere else (e.g. Claude Desktop, Cursor), you should be able to point a Slack bot at the same servers and start asking questions about your stack. Pythia is that bot.
 
 Use any LLM via [OpenRouter](https://openrouter.ai) or any OpenAI-compatible endpoint, point it at any MCP servers, run it as a single container.
 
-## Install
-
-### Local
-
-Requires Python 3.12+ and [`uv`](https://docs.astral.sh/uv/).
-
-```sh
-git clone git@github.com:SixTwoDev/Pythia.git
-cd Pythia
-uv sync
-cp .env.example .env  # then fill in your tokens
-uv run pythia
-```
+## Deploy
 
 ### Docker
 
@@ -157,19 +187,28 @@ CODEBASE_REPOS=git@github.com:acme/api.git
 CODEBASE_REPOS=api=git@github.com:acme/api.git,web=https://github.com/acme/web.git
 ```
 
-Auth uses whatever `git clone` would use &mdash; mount an SSH key into the container for `git@…` URLs, or embed a token in HTTPS URLs (`https://x:TOKEN@github.com/...`).
-
 The clones live in a tempdir for the lifetime of the process and are deleted on shutdown. To refresh, restart the bot.
 
-## Slack app setup
+### Auth for private repos
 
-Pythia uses Socket Mode, so no public URL or ingress is needed.
+Pythia shells out to `git clone` with the parent process's environment fully inherited &mdash; whatever lets *you* `git clone <url>` from a terminal will work for Pythia.
 
-1. Go to <https://api.slack.com/apps> and click **Create New App** &rarr; **From an app manifest**.
-2. Pick your workspace, then paste the contents of [`slack-app-manifest.json`](./slack-app-manifest.json).
-3. Under **Basic Information**, generate an **App-Level Token** with the `connections:write` scope &mdash; this is your `SLACK_APP_TOKEN` (`xapp-...`).
-4. Under **Install App**, install to your workspace and copy the **Bot User OAuth Token** &mdash; this is your `SLACK_BOT_TOKEN` (`xoxb-...`).
-5. Drop both tokens into your `.env` (or your Helm values / Kubernetes Secret) and start Pythia.
+**SSH (recommended for K8s).** `git@github.com:owner/repo.git` URLs use `~/.ssh/` and `ssh-agent`. Generate a per-bot **deploy key** (one keypair per repo, `Settings → Deploy keys → Add` on each), mount the private half into the container, and Pythia's clones are scoped to exactly those repos. The Helm chart's `codebase.sshExistingSecret` does the mount + `GIT_SSH_COMMAND` wiring for you.
+
+**Personal Access Token over HTTPS.** Embed a fine-grained PAT (or a GitHub App installation token) in the URL:
+
+```sh
+export GH_TOKEN=github_pat_...
+CODEBASE_REPOS="api=https://x-access-token:${GH_TOKEN}@github.com/owner/api.git"
+```
+
+A **fine-grained PAT** scoped to "Contents: read" on just the repos Pythia needs is the safest version &mdash; classic tokens grant much broader access than this use case wants. To rotate, update the token in the Secret and restart the bot.
+
+When using the chart, put the whole `CODEBASE_REPOS` string (with the token embedded) into your `existingSecret` rather than passing it via `--set`, so the token never appears in `kubectl describe pod` output.
+
+**`gh` as credential helper (local dev only).** If you've run `gh auth login` and `gh auth setup-git` on the host, plain `https://github.com/owner/repo.git` URLs authenticate transparently via the `gh` binary &mdash; no token in your config. Doesn't apply inside containers (no `gh` installed).
+
+GitLab, Bitbucket, and self-hosted Git work the same way: SSH key, or token-in-URL with whatever username convention your host uses (`oauth2:`, `gitlab-ci-token:`, etc.).
 
 ## Development
 

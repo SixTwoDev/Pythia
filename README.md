@@ -138,6 +138,8 @@ Point `MCP_SERVERS_CONFIG` at the file, mount it into the container, and the age
 
 The dict key (e.g. `"datadog"`) becomes the server's `tool_prefix` automatically, so `search` from `datadog` and `search` from another server won't collide.
 
+Drop-in configs are in [`examples/mcp-servers/`](examples/mcp-servers/) — `minimal.json` (time + filesystem, zero auth) is a good smoke-test starting point.
+
 ## Codebase access
 
 Set `CODEBASE_REPOS` to a comma-separated list of git URLs (or `name=url` pairs) and Pythia will shallow-clone each into a tempdir on startup, then expose two tools to the LLM:

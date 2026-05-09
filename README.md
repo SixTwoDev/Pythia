@@ -5,6 +5,12 @@
 
 An open-source Slack bot that connects an LLM to arbitrary [MCP](https://modelcontextprotocol.io) servers. Mention Pythia in Slack and it answers using whatever tools you've configured. Stateless, single container, configured by environment variables.
 
+## Who's Pythia?
+
+The Pythia was the priestess at the Oracle of Delphi &mdash; engineers and kings would walk up the mountain with hard questions and come back down with answers drawn from sources they couldn't reach themselves. This bot does the same job in Slack: ask in plain English and Pythia goes off to your codebase, your Jira, your Datadog, your GitHub &mdash; whatever MCP servers you've configured &mdash; and comes back with an answer.
+
+(The name also nods to Python, the serpent slain at Delphi that gave the Pythia her title &mdash; and the language Pythia is written in.)
+
 ## Why
 
 If you've configured Jira, Datadog, GitHub, or any other MCP server somewhere else (e.g. Claude Desktop, Cursor), you should be able to point a Slack bot at the same servers and start asking questions about your stack. Pythia is that bot.
@@ -155,9 +161,28 @@ CODEBASE_REPOS=git@github.com:acme/api.git
 CODEBASE_REPOS=api=git@github.com:acme/api.git,web=https://github.com/acme/web.git
 ```
 
-Auth uses whatever `git clone` would use &mdash; mount an SSH key into the container for `git@…` URLs, or embed a token in HTTPS URLs (`https://x:TOKEN@github.com/...`).
-
 The clones live in a tempdir for the lifetime of the process and are deleted on shutdown. To refresh, restart the bot.
+
+### Auth for private repos
+
+Pythia shells out to `git clone` with the parent process's environment fully inherited &mdash; whatever lets *you* `git clone <url>` from a terminal will work for Pythia.
+
+**SSH (recommended for K8s).** `git@github.com:owner/repo.git` URLs use `~/.ssh/` and `ssh-agent`. Generate a per-bot **deploy key** (one keypair per repo, `Settings → Deploy keys → Add` on each), mount the private half into the container, and Pythia's clones are scoped to exactly those repos. The Helm chart's `codebase.sshExistingSecret` does the mount + `GIT_SSH_COMMAND` wiring for you.
+
+**Personal Access Token over HTTPS.** Embed a fine-grained PAT (or a GitHub App installation token) in the URL:
+
+```sh
+export GH_TOKEN=github_pat_...
+CODEBASE_REPOS="api=https://x-access-token:${GH_TOKEN}@github.com/owner/api.git"
+```
+
+A **fine-grained PAT** scoped to "Contents: read" on just the repos Pythia needs is the safest version &mdash; classic tokens grant much broader access than this use case wants. To rotate, update the token in the Secret and restart the bot.
+
+When using the chart, put the whole `CODEBASE_REPOS` string (with the token embedded) into your `existingSecret` rather than passing it via `--set`, so the token never appears in `kubectl describe pod` output.
+
+**`gh` as credential helper (local dev only).** If you've run `gh auth login` and `gh auth setup-git` on the host, plain `https://github.com/owner/repo.git` URLs authenticate transparently via the `gh` binary &mdash; no token in your config. Doesn't apply inside containers (no `gh` installed).
+
+GitLab, Bitbucket, and self-hosted Git work the same way: SSH key, or token-in-URL with whatever username convention your host uses (`oauth2:`, `gitlab-ci-token:`, etc.).
 
 ## Slack app setup
 

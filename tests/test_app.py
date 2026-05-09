@@ -137,6 +137,19 @@ def test_reply_blocks_omits_button_when_no_tool_calls_were_made() -> None:
     assert blocks[0]["type"] == "section"
 
 
+def test_reply_blocks_chunks_long_text_under_the_3000_char_section_limit() -> None:
+    text = (
+        ("paragraph one. " * 250 + "\n\n")
+        + ("paragraph two. " * 250 + "\n\n")
+        + ("paragraph three. " * 250)
+    )
+    blocks = reply_blocks(text, [])
+    assert len(blocks) > 1, "long text should be split across multiple section blocks"
+    for block in blocks:
+        assert block["type"] == "section"
+        assert len(block["text"]["text"]) <= 3000, "every section must fit Slack's 3000-char cap"
+
+
 def test_reply_blocks_appends_show_button_when_tool_calls_present() -> None:
     calls = [
         ToolCall(name="search_code", args='{"q": "load_mcp"}'),

@@ -35,11 +35,41 @@ TRACE_ACTIONS_BLOCK_ID = "pythia_tool_trace_actions"
 # Slack action `value` field is capped at 2000 chars; leave a little headroom.
 _MAX_TRACE_VALUE = 1990
 
+# Slack `section` block text is capped at 3000 chars. We split long answers
+# into multiple section blocks; each chunk gets a little headroom under the
+# limit so a stray prefix/suffix doesn't push us over.
+_SECTION_CHUNK_LIMIT = 2900
+
 
 def _truncate_trace(trace: str) -> str:
     if len(trace) <= _MAX_TRACE_VALUE:
         return trace
     return trace[: _MAX_TRACE_VALUE - 1] + "…"
+
+
+def _chunk_for_sections(text: str, limit: int = _SECTION_CHUNK_LIMIT) -> list[str]:
+    """Split text into chunks each ≤ `limit` chars, preferring paragraph,
+    then line, then word boundaries before falling back to a hard slice.
+    Empty inputs yield a single empty chunk so callers always emit one block.
+    """
+    if len(text) <= limit:
+        return [text]
+    chunks: list[str] = []
+    remaining = text
+    while remaining:
+        if len(remaining) <= limit:
+            chunks.append(remaining)
+            break
+        cut = remaining.rfind("\n\n", 0, limit)
+        if cut <= limit // 4:
+            cut = remaining.rfind("\n", 0, limit)
+        if cut <= limit // 4:
+            cut = remaining.rfind(" ", 0, limit)
+        if cut <= 0:
+            cut = limit
+        chunks.append(remaining[:cut].rstrip())
+        remaining = remaining[cut:].lstrip()
+    return chunks
 
 
 def _show_button(trace: str, count: int) -> dict[str, Any]:
@@ -81,7 +111,10 @@ def _trace_block(trace: str) -> dict[str, Any]:
 
 
 def reply_blocks(text: str, tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
-    blocks: list[dict[str, Any]] = [{"type": "section", "text": {"type": "mrkdwn", "text": text}}]
+    blocks: list[dict[str, Any]] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": chunk}}
+        for chunk in _chunk_for_sections(text)
+    ]
     if tool_calls:
         trace = _truncate_trace(format_tool_trace(tool_calls))
         blocks.append(_show_button(trace, len(tool_calls)))

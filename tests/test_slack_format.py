@@ -1,4 +1,5 @@
-from pythia.slack_format import to_slack_mrkdwn
+from pythia.agent import ToolCall
+from pythia.slack_format import format_tool_trace, to_slack_mrkdwn
 
 
 def test_double_asterisk_bold_becomes_single_asterisk_bold() -> None:
@@ -43,6 +44,18 @@ def test_fenced_code_block_contents_are_left_untouched() -> None:
 
 def test_inline_code_contents_are_left_untouched() -> None:
     assert to_slack_mrkdwn("Use `**raw**` here") == "Use `**raw**` here"
+
+
+def test_format_tool_trace_collapses_newlines_in_args_to_single_line() -> None:
+    out = format_tool_trace([ToolCall(name="search", args='{"q": "line one\nline two"}')])
+    assert "\n" not in out
+    assert "line one line two" in out
+
+
+def test_format_tool_trace_breaks_up_triple_backticks_in_args() -> None:
+    out = format_tool_trace([ToolCall(name="search", args='{"q": "```python"}')])
+    # Verbatim ``` must not survive — would close the surrounding code fence.
+    assert "```" not in out
 
 
 def test_real_world_llm_response_converts_cleanly() -> None:

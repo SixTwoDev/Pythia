@@ -50,25 +50,39 @@ def _truncate_trace(trace: str) -> str:
 def _chunk_for_sections(text: str, limit: int = _SECTION_CHUNK_LIMIT) -> list[str]:
     """Split text into chunks each ≤ `limit` chars, preferring paragraph,
     then line, then word boundaries before falling back to a hard slice.
-    Empty inputs yield a single empty chunk so callers always emit one block.
+
+    The boundary character(s) we cut at are treated as delimiters and dropped
+    (a `\\n\\n` between paragraphs, the `\\n` ending a line, the space between
+    words). On a hard slice we keep every character, so significant whitespace
+    in code blocks or indented markdown is never silently eaten.
     """
     if len(text) <= limit:
         return [text]
     chunks: list[str] = []
     remaining = text
+    min_acceptable_cut = limit // 4
     while remaining:
         if len(remaining) <= limit:
             chunks.append(remaining)
             break
         cut = remaining.rfind("\n\n", 0, limit)
-        if cut <= limit // 4:
-            cut = remaining.rfind("\n", 0, limit)
-        if cut <= limit // 4:
-            cut = remaining.rfind(" ", 0, limit)
-        if cut <= 0:
-            cut = limit
-        chunks.append(remaining[:cut].rstrip())
-        remaining = remaining[cut:].lstrip()
+        if cut > min_acceptable_cut:
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut + 2 :]
+            continue
+        cut = remaining.rfind("\n", 0, limit)
+        if cut > min_acceptable_cut:
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut + 1 :]
+            continue
+        cut = remaining.rfind(" ", 0, limit)
+        if cut > min_acceptable_cut:
+            chunks.append(remaining[:cut])
+            remaining = remaining[cut + 1 :]
+            continue
+        # No usable whitespace boundary — slice without stripping.
+        chunks.append(remaining[:limit])
+        remaining = remaining[limit:]
     return chunks
 
 

@@ -150,6 +150,28 @@ def test_reply_blocks_chunks_long_text_under_the_3000_char_section_limit() -> No
         assert len(block["text"]["text"]) <= 3000, "every section must fit Slack's 3000-char cap"
 
 
+def test_reply_blocks_preserves_significant_whitespace_when_hard_splitting() -> None:
+    # A long unbroken token (no whitespace) forces a hard slice — every
+    # original character must survive the split.
+    text = "a" * 5000 + "\n    indented_code_should_keep_its_leading_spaces"
+    blocks = reply_blocks(text, [])
+    rejoined = "".join(b["text"]["text"] for b in blocks)
+    assert rejoined == text, "hard-cut chunks must concatenate back to the original"
+
+
+def test_reply_blocks_drops_only_the_paragraph_delimiter_at_a_clean_split() -> None:
+    # Two paragraphs each under the limit, joined by a blank line. The split
+    # should land cleanly on the \n\n; the blank line is a delimiter (dropped)
+    # but each paragraph's contents survive byte-for-byte.
+    para_a = "alpha-paragraph-content-without-spaces" * 40  # one solid token, ~1520 chars
+    para_b = "beta-paragraph-content-without-spaces" * 40
+    text = para_a + "\n\n" + para_b
+    blocks = reply_blocks(text, [])
+    assert len(blocks) == 2
+    assert blocks[0]["text"]["text"] == para_a
+    assert blocks[1]["text"]["text"] == para_b
+
+
 def test_reply_blocks_appends_show_button_when_tool_calls_present() -> None:
     calls = [
         ToolCall(name="search_code", args='{"q": "load_mcp"}'),

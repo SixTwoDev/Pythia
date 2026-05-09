@@ -1,6 +1,8 @@
-# Pythia
+<p align="center">
+  <img src="slack-app-icon.png" alt="Pythia" width="160">
+</p>
 
-<img src="slack-app-icon.png" alt="Pythia" width="140" align="right">
+# Pythia
 
 [![CI](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml/badge.svg)](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServer
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
 
@@ -36,6 +37,25 @@ def test_build_agent_returns_an_agent_using_the_configured_model() -> None:
     assert isinstance(agent, Agent)
     assert isinstance(agent.model, OpenAIChatModel)
     assert agent.model.model_name == "openai/gpt-4o"
+
+
+def _mcp_toolsets(agent: Agent[None, str]) -> list[MCPServer]:
+    return [t for t in agent.toolsets if isinstance(t, MCPServer)]
+
+
+def test_build_agent_attaches_mcp_servers_from_the_configured_file(tmp_path: Path) -> None:
+    config_file = tmp_path / "mcp.json"
+    config_file.write_text(
+        '{"mcpServers": {"time": {"command": "uvx", "args": ["mcp-server-time"]}}}',
+        encoding="utf-8",
+    )
+    agent = build_agent(_settings(mcp_servers_config=str(config_file)))
+    assert len(_mcp_toolsets(agent)) == 1
+
+
+def test_build_agent_attaches_no_mcp_servers_when_no_config_set() -> None:
+    agent = build_agent(_settings())
+    assert _mcp_toolsets(agent) == []
 
 
 @pytest.mark.asyncio

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from pydantic_ai import Agent
+from pydantic_ai.mcp import MCPServer, load_mcp_servers
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
 
@@ -24,10 +25,20 @@ def _system_prompt(settings: Settings) -> str:
     return DEFAULT_SYSTEM_PROMPT
 
 
+def _mcp_servers(settings: Settings) -> list[MCPServer]:
+    if not settings.mcp_servers_config:
+        return []
+    return list(load_mcp_servers(settings.mcp_servers_config))
+
+
 def build_agent(settings: Settings) -> Agent[None, str]:
     provider = OpenAIProvider(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
     model = OpenAIChatModel(settings.openai_model, provider=provider)
-    return Agent(model, system_prompt=_system_prompt(settings))
+    return Agent(
+        model,
+        system_prompt=_system_prompt(settings),
+        toolsets=_mcp_servers(settings),
+    )
 
 
 async def answer(agent: Agent[None, str], prompt: str) -> str:

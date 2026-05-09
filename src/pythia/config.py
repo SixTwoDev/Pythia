@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     openai_model: str = Field(min_length=1)
 
     pythia_system_prompt_file: str | None = None
+    mcp_servers_config: str | None = None
 
 
 def load() -> Settings:

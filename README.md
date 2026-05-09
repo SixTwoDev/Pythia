@@ -60,8 +60,48 @@ All configuration is via environment variables.
 | `OPENAI_BASE_URL` | no | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint &mdash; OpenAI, Azure OpenAI, Ollama, vLLM, LM Studio, etc. |
 | `OPENAI_MODEL` | yes | &mdash; | Model identifier as exposed by your endpoint (e.g. `anthropic/claude-sonnet-4.5` on OpenRouter, `gpt-4o` on OpenAI). |
 | `PYTHIA_SYSTEM_PROMPT_FILE` | no | &mdash; | Path to a file whose contents replace the built-in system prompt. |
+| `MCP_SERVERS_CONFIG` | no | &mdash; | Path to a JSON file declaring MCP servers (see below). Without it, Pythia runs with no tools and just answers from the conversation. |
 
-More variables (MCP servers) will be added as those features land.
+## MCP servers
+
+Pythia loads MCP servers from a JSON file in [Claude Desktop's `mcpServers` shape](https://modelcontextprotocol.io/quickstart/user), so you can copy-paste the same config you use elsewhere. Both stdio (subprocess) and HTTP transports are supported:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/var/lib/pythia/repo"]
+    },
+    "datadog": {
+      "command": "uvx",
+      "args": ["mcp-server-datadog"],
+      "env": {
+        "DD_API_KEY": "...",
+        "DD_APP_KEY": "..."
+      }
+    },
+    "atlassian": {
+      "url": "https://mcp.atlassian.com/v1/sse",
+      "headers": { "Authorization": "Bearer ..." }
+    }
+  }
+}
+```
+
+Point `MCP_SERVERS_CONFIG` at the file, mount it into the container, and the agent will start the servers on boot and expose their tools to the LLM.
+
+`${VAR_NAME}` and `${VAR_NAME:-default}` references inside the JSON are expanded from Pythia's environment at load time, so you can keep secrets out of the file:
+
+```json
+"datadog": {
+  "command": "uvx",
+  "args": ["mcp-server-datadog"],
+  "env": { "DD_API_KEY": "${DD_API_KEY}", "DD_APP_KEY": "${DD_APP_KEY}" }
+}
+```
+
+The dict key (e.g. `"datadog"`) becomes the server's `tool_prefix` automatically, so `search` from `datadog` and `search` from another server won't collide.
 
 ## Slack app setup
 

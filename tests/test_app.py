@@ -3,7 +3,19 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from pythia.app import ERROR_REPLY, PLACEHOLDER_REPLY, respond_to_mention
+from pythia.agent import ToolCall
+from pythia.app import (
+    ACTION_HIDE_TOOL_TRACE,
+    ACTION_SHOW_TOOL_TRACE,
+    ERROR_REPLY,
+    PLACEHOLDER_REPLY,
+    TRACE_ACTIONS_BLOCK_ID,
+    TRACE_BLOCK_ID,
+    collapse_tool_trace,
+    expand_tool_trace,
+    reply_blocks,
+    respond_to_mention,
+)
 
 BOT_USER_ID = "UBOT123"
 
@@ -11,6 +23,9 @@ BOT_USER_ID = "UBOT123"
 class FakeAgentResult:
     def __init__(self, output: str) -> None:
         self.output = output
+
+    def all_messages(self) -> list[object]:
+        return []  # tool-call paths are exercised in reply_blocks tests directly
 
 
 def _fake_agent(output: str = "the answer") -> Any:
@@ -29,6 +44,9 @@ def _fake_say(placeholder_ts: str = "200.0") -> AsyncMock:
     say = AsyncMock()
     say.return_value = {"ts": placeholder_ts}
     return say
+
+
+# --- respond_to_mention -----------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -50,10 +68,14 @@ async def test_respond_posts_placeholder_then_updates_with_the_real_answer() -> 
     prompt = agent.run.await_args.args[0]
     assert "why is the api slow?" in prompt
     assert "pythia: looking..." in prompt
-    # mrkdwn-converted (** → *)
-    client.chat_update.assert_awaited_once_with(
-        channel="C9", ts="200.5", text="found it: *PROD-123*"
-    )
+    client.chat_update.assert_awaited_once()
+    update_kwargs = client.chat_update.await_args.kwargs
+    assert update_kwargs["channel"] == "C9"
+    assert update_kwargs["ts"] == "200.5"
+    assert update_kwargs["text"] == "found it: *PROD-123*"  # mrkdwn-converted
+    # No tool calls -> only the section block, no actions button
+    assert len(update_kwargs["blocks"]) == 1
+    assert update_kwargs["blocks"][0]["type"] == "section"
 
 
 @pytest.mark.asyncio
@@ -104,3 +126,101 @@ async def test_respond_aborts_silently_when_placeholder_post_fails() -> None:
 
     client.chat_update.assert_not_awaited()
     client.conversations_replies.assert_not_awaited()
+
+
+# --- reply_blocks -----------------------------------------------------------
+
+
+def test_reply_blocks_omits_button_when_no_tool_calls_were_made() -> None:
+    blocks = reply_blocks("the answer", [])
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "section"
+
+
+def test_reply_blocks_appends_show_button_when_tool_calls_present() -> None:
+    calls = [
+        ToolCall(name="search_code", args='{"q": "load_mcp"}'),
+        ToolCall(name="read_file", args='{"path": "agent.py"}'),
+    ]
+    blocks = reply_blocks("the answer", calls)
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "section"
+    assert blocks[1]["type"] == "actions"
+    button = blocks[1]["elements"][0]
+    assert button["action_id"] == ACTION_SHOW_TOOL_TRACE
+    assert button["text"]["text"] == "Show 2 tool call(s)"
+    # Trace text contains both calls, one per line.
+    assert "search_code(" in button["value"]
+    assert "read_file(" in button["value"]
+
+
+# --- expand / collapse ------------------------------------------------------
+
+
+def _click_body(action_id: str, value: str, blocks: list[dict[str, Any]]) -> dict[str, Any]:
+    return {
+        "channel": {"id": "C9"},
+        "message": {"ts": "200.0", "text": "the answer", "blocks": blocks},
+        "actions": [{"action_id": action_id, "value": value}],
+        "trigger_id": "trig-1",
+    }
+
+
+@pytest.mark.asyncio
+async def test_expand_appends_trace_section_and_swaps_button_to_hide() -> None:
+    initial = reply_blocks("the answer", [ToolCall(name="search_code", args='{"q": "x"}')])
+    show_button = initial[1]
+    trace_value = show_button["elements"][0]["value"]
+    body = _click_body(ACTION_SHOW_TOOL_TRACE, trace_value, initial)
+    client = AsyncMock()
+
+    await expand_tool_trace(client, body)
+
+    client.chat_update.assert_awaited_once()
+    new_blocks = client.chat_update.await_args.kwargs["blocks"]
+    block_ids = [b.get("block_id") for b in new_blocks]
+    assert TRACE_BLOCK_ID in block_ids
+    assert TRACE_ACTIONS_BLOCK_ID in block_ids
+    trace_block = next(b for b in new_blocks if b.get("block_id") == TRACE_BLOCK_ID)
+    assert "search_code(" in trace_block["text"]["text"]
+    actions_block = next(b for b in new_blocks if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
+    assert actions_block["elements"][0]["action_id"] == ACTION_HIDE_TOOL_TRACE
+
+
+@pytest.mark.asyncio
+async def test_collapse_removes_trace_section_and_swaps_button_to_show() -> None:
+    initial = reply_blocks("the answer", [ToolCall(name="search_code", args='{"q": "x"}')])
+    show_value = initial[1]["elements"][0]["value"]
+    # Simulate the post-expand state: section, trace section, hide button.
+    expanded_blocks = [
+        initial[0],
+        {
+            "type": "section",
+            "block_id": TRACE_BLOCK_ID,
+            "text": {"type": "mrkdwn", "text": f"```\n{show_value}\n```"},
+        },
+        {
+            "type": "actions",
+            "block_id": TRACE_ACTIONS_BLOCK_ID,
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Hide tool calls"},
+                    "action_id": ACTION_HIDE_TOOL_TRACE,
+                    "value": show_value,
+                }
+            ],
+        },
+    ]
+    body = _click_body(ACTION_HIDE_TOOL_TRACE, show_value, expanded_blocks)
+    client = AsyncMock()
+
+    await collapse_tool_trace(client, body)
+
+    client.chat_update.assert_awaited_once()
+    new_blocks = client.chat_update.await_args.kwargs["blocks"]
+    block_ids = [b.get("block_id") for b in new_blocks]
+    assert TRACE_BLOCK_ID not in block_ids
+    assert TRACE_ACTIONS_BLOCK_ID in block_ids
+    actions_block = next(b for b in new_blocks if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
+    assert actions_block["elements"][0]["action_id"] == ACTION_SHOW_TOOL_TRACE

@@ -1,4 +1,6 @@
 import logging
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
@@ -8,6 +10,7 @@ from slack_bolt.context.say.async_say import AsyncSay
 from slack_sdk.web.async_client import AsyncWebClient
 
 from pythia.agent import answer, build_agent
+from pythia.codebase import build_codebase_tools, clone_all, parse_repos, require_binaries
 from pythia.config import load
 from pythia.slack_thread import fetch_thread, format_thread
 
@@ -44,12 +47,22 @@ def register_handlers(app: AsyncApp, agent: Agent[None, str], bot_user_id: str) 
 async def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = load()
-    agent = build_agent(settings)
-    app = AsyncApp(token=settings.slack_bot_token)
-    auth = await app.client.auth_test()
-    bot_user_id = str(auth["user_id"])
-    register_handlers(app, agent, bot_user_id)
-    handler = AsyncSocketModeHandler(app, settings.slack_app_token)
-    logger.info("Starting Pythia in Socket Mode as user %s", bot_user_id)
-    async with agent.run_mcp_servers():
-        await handler.start_async()
+    repo_specs = parse_repos(settings.codebase_repos)
+    if repo_specs:
+        require_binaries("git", "rg")
+
+    with tempfile.TemporaryDirectory(prefix="pythia-repos-") as tmp:
+        repos = await clone_all(repo_specs, Path(tmp))
+        agent = build_agent(settings, extra_tools=build_codebase_tools(repos))
+        app = AsyncApp(token=settings.slack_bot_token)
+        auth = await app.client.auth_test()
+        bot_user_id = str(auth["user_id"])
+        register_handlers(app, agent, bot_user_id)
+        handler = AsyncSocketModeHandler(app, settings.slack_app_token)
+        logger.info(
+            "Starting Pythia in Socket Mode as user %s with %d repo(s)",
+            bot_user_id,
+            len(repos),
+        )
+        async with agent.run_mcp_servers():
+            await handler.start_async()

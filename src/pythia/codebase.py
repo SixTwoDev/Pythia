@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import os
 import shutil
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -65,7 +66,7 @@ async def clone_repo(spec: RepoSpec, base_dir: Path) -> Repo:
         "--",
         spec.url,
         str(target),
-        env={"GIT_TERMINAL_PROMPT": "0"},
+        env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )

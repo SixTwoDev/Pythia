@@ -5,10 +5,12 @@ from typing import cast
 
 import pytest
 
+from pythia import codebase as codebase_module
 from pythia.codebase import (
     Repo,
     RepoSpec,
     build_codebase_tools,
+    clone_repo,
     parse_repos,
     require_binaries,
 )
@@ -63,6 +65,34 @@ def test_parse_repos_raises_on_empty_token_around_equals() -> None:
 def test_require_binaries_raises_when_missing() -> None:
     with pytest.raises(RuntimeError, match="not found on PATH"):
         require_binaries("definitely-not-a-real-binary-9999")
+
+
+@pytest.mark.asyncio
+async def test_clone_repo_inherits_parent_environment_and_disables_terminal_prompt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    class _FakeProc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"", b"")
+
+    async def _fake_exec(*args: object, **kwargs: object) -> _FakeProc:
+        captured.update(kwargs)
+        return _FakeProc()
+
+    monkeypatch.setattr(codebase_module.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setenv("PYTHIA_TEST_MARKER", "inherited")
+
+    await clone_repo(RepoSpec(name="x", url="git@example.com:x.git"), tmp_path)
+
+    env = captured.get("env")
+    assert isinstance(env, dict)
+    assert env["PYTHIA_TEST_MARKER"] == "inherited"
+    assert env["GIT_TERMINAL_PROMPT"] == "0"
+    assert "PATH" in env, "PATH must be inherited so git can find ssh and helpers"
 
 
 @pytest.fixture

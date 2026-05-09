@@ -50,3 +50,33 @@ jobs:
           tags: pythia:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm lint
+        run: helm lint deploy/helm/pythia
+
+      - name: Helm template (minimal)
+        run: |
+          helm template pythia deploy/helm/pythia \
+            --set slack.botToken=xoxb-x --set slack.appToken=xapp-x \
+            --set llm.apiKey=sk-x --set llm.model=openai/gpt-4o-mini \
+            > /dev/null
+
+      - name: Helm template (full)
+        run: |
+          helm template pythia deploy/helm/pythia \
+            --set slack.botToken=xoxb-x --set slack.appToken=xapp-x \
+            --set llm.apiKey=sk-x --set llm.model=openai/gpt-4o-mini \
+            --set mcp.existingSecret=mcp \
+            --set prompt.existingConfigMap=prompt \
+            --set codebase.repos="api=git@github.com:acme/api.git" \
+            --set codebase.sshExistingSecret=ssh \
+            > /dev/null
+
+      - name: Helm template (existingSecret)
+        run: |
+          helm template pythia deploy/helm/pythia \
+            --set existingSecret=mysec --set llm.model=openai/gpt-4o-mini \
+            > /dev/null

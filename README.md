@@ -36,17 +36,51 @@ docker run --rm \
 
 ### Helm
 
+Minimal install (LLM-only, no MCP, no codebase):
+
 ```sh
 helm install pythia ./deploy/helm/pythia \
   --set slack.botToken=xoxb-... \
-  --set slack.appToken=xapp-...
+  --set slack.appToken=xapp-... \
+  --set llm.apiKey=sk-... \
+  --set llm.model=anthropic/claude-sonnet-4.5
 ```
 
-Or reference an existing Secret containing `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN`:
+Production-friendlier: keep secrets out of `helm install` args by creating a `Secret` with `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `OPENAI_API_KEY` (and optionally `CODEBASE_REPOS`) and reference it:
 
 ```sh
-helm install pythia ./deploy/helm/pythia --set existingSecret=my-pythia-secret
+kubectl create secret generic pythia-secrets \
+  --from-literal=SLACK_BOT_TOKEN=xoxb-... \
+  --from-literal=SLACK_APP_TOKEN=xapp-... \
+  --from-literal=OPENAI_API_KEY=sk-...
+
+helm install pythia ./deploy/helm/pythia \
+  --set existingSecret=pythia-secrets \
+  --set llm.model=anthropic/claude-sonnet-4.5
 ```
+
+To enable MCP servers, codebase access, or a custom system prompt, create the corresponding K8s objects and reference them:
+
+```sh
+# MCP: ConfigMap-shaped JSON in a Secret (under key `mcp-servers.json`)
+kubectl create secret generic pythia-mcp --from-file=mcp-servers.json=./my-mcp.json
+
+# System prompt: ConfigMap (key `system-prompt.md`)
+kubectl create configmap pythia-prompt --from-file=system-prompt.md=./my-prompt.md
+
+# SSH for git@ clone URLs: Secret with key `id_rsa`
+kubectl create secret generic pythia-ssh --from-file=id_rsa=$HOME/.ssh/pythia_deploy_key
+
+helm install pythia ./deploy/helm/pythia \
+  --set existingSecret=pythia-secrets \
+  --set llm.model=anthropic/claude-sonnet-4.5 \
+  --set mcp.existingSecret=pythia-mcp \
+  --set prompt.existingConfigMap=pythia-prompt \
+  --set codebase.repos="api=git@github.com:acme/api.git,web=git@github.com:acme/web.git" \
+  --set codebase.sshExistingSecret=pythia-ssh
+```
+
+The chart mounts an `emptyDir` at `/tmp` so the codebase clone (and any stdio MCP server that writes scratch state) works under `readOnlyRootFilesystem: true`.
 
 ## Configuration
 

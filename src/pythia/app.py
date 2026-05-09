@@ -12,10 +12,12 @@ from slack_sdk.web.async_client import AsyncWebClient
 from pythia.agent import answer, build_agent
 from pythia.codebase import build_codebase_tools, clone_all, parse_repos, require_binaries
 from pythia.config import load
+from pythia.slack_format import to_slack_mrkdwn
 from pythia.slack_thread import fetch_thread, format_thread
 
 logger = logging.getLogger(__name__)
 
+PLACEHOLDER_REPLY = "_Pythia is thinking…_"
 ERROR_REPLY = "Sorry — I hit an error. Check the bot logs."
 
 
@@ -28,14 +30,23 @@ async def respond_to_mention(
 ) -> None:
     thread_ts: str = event.get("thread_ts") or event["ts"]
     channel: str = event["channel"]
+
+    try:
+        placeholder = await say(text=PLACEHOLDER_REPLY, thread_ts=thread_ts)
+    except Exception:
+        logger.exception("failed to post placeholder reply")
+        return
+
+    placeholder_ts = str(placeholder["ts"])
+
     try:
         messages = await fetch_thread(client, channel, thread_ts)
         prompt = format_thread(messages, bot_user_id)
-        reply = await answer(agent, prompt)
-        await say(text=reply, thread_ts=thread_ts)
+        reply = to_slack_mrkdwn(await answer(agent, prompt))
+        await client.chat_update(channel=channel, ts=placeholder_ts, text=reply)
     except Exception:
         logger.exception("agent run failed")
-        await say(text=ERROR_REPLY, thread_ts=thread_ts)
+        await client.chat_update(channel=channel, ts=placeholder_ts, text=ERROR_REPLY)
 
 
 def register_handlers(app: AsyncApp, agent: Agent[None, str], bot_user_id: str) -> None:

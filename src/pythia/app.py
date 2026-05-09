@@ -51,4 +51,5 @@ async def main() -> None:
     register_handlers(app, agent, bot_user_id)
     handler = AsyncSocketModeHandler(app, settings.slack_app_token)
     logger.info("Starting Pythia in Socket Mode as user %s", bot_user_id)
-    await handler.start_async()
+    async with agent.run_mcp_servers():
+        await handler.start_async()

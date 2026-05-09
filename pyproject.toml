@@ -9,7 +9,7 @@ authors = [{ name = "SixTwoDev" }]
 dependencies = [
     "slack-bolt>=1.21",
     "pydantic-settings>=2.6",
-    "pydantic-ai-slim[openai]>=1.93.0",
+    "pydantic-ai-slim[mcp,openai]>=1.93.0",
     "aiohttp>=3.13.5",
 ]
 

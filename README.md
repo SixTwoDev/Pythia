@@ -48,7 +48,7 @@ EOF
 uv run pythia
 ```
 
-In Slack, invite Pythia to a channel (`/invite @Pythia`) and mention it: `@Pythia hello?` &mdash; you should get a reply within a few seconds.
+In Slack, invite Pythia to a channel (`/invite @Pythia`) and mention it: `@Pythia hello?` &mdash; you should get a reply within a few seconds. You can also drop an image, log file, or source file into your mention and Pythia will read it (images go to vision-capable models; text/code files are inlined into the prompt).
 
 That's the whole bot. To make it useful, plug in [MCP servers](#mcp-servers) (Jira, Datadog, GitHub, &hellip;) and let it [read your codebase](#codebase-access).
 

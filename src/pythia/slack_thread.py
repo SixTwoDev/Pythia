@@ -15,9 +15,14 @@ def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:
     lines: list[str] = []
     for message in messages:
         text = (message.get("text") or "").strip()
-        if not text:
+        files = message.get("files") or []
+        if not text and not files:
             continue
         user = message.get("user") or message.get("bot_id") or "unknown"
         speaker = "pythia" if user == bot_user_id else f"<@{user}>"
-        lines.append(f"{speaker}: {text}")
+        line = f"{speaker}: {text}".rstrip()
+        if files:
+            names = ", ".join(str(f.get("name") or "?") for f in files)
+            line = f"{line} [attached: {names}]" if text else f"{speaker}: [attached: {names}]"
+        lines.append(line)
     return "\n".join(lines)

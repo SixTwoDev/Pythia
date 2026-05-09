@@ -14,6 +14,7 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     HandleResponseEvent,
     ToolCallPart,
+    UserContent,
 )
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.providers.openai import OpenAIProvider
@@ -137,7 +138,7 @@ def _format_args(args: object) -> str:
         return str(args)
 
 
-async def answer(agent: Agent[None, str], prompt: str) -> AgentReply:
+async def answer(agent: Agent[None, str], prompt: str | Sequence[UserContent]) -> AgentReply:
     result = await agent.run(prompt)
     calls: list[ToolCall] = []
     for message in result.all_messages():

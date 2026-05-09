@@ -60,11 +60,11 @@ More variables (LLM provider, MCP servers) will be added as those features land.
 
 Pythia uses Socket Mode, so no public URL or ingress is needed.
 
-1. Create a Slack app at <https://api.slack.com/apps> (from manifest or scratch).
-2. Enable **Socket Mode**, generate an app-level token with `connections:write`.
-3. Under **OAuth & Permissions**, add bot scopes: `app_mentions:read`, `chat:write`, `channels:history`, `groups:history`.
-4. Subscribe to bot events: `app_mention`.
-5. Install the app to your workspace; copy the bot and app-level tokens into your env.
+1. Go to <https://api.slack.com/apps> and click **Create New App** &rarr; **From an app manifest**.
+2. Pick your workspace, then paste the contents of [`slack-app-manifest.json`](./slack-app-manifest.json).
+3. Under **Basic Information**, generate an **App-Level Token** with the `connections:write` scope &mdash; this is your `SLACK_APP_TOKEN` (`xapp-...`).
+4. Under **Install App**, install to your workspace and copy the **Bot User OAuth Token** &mdash; this is your `SLACK_BOT_TOKEN` (`xoxb-...`).
+5. Drop both tokens into your `.env` (or your Helm values / Kubernetes Secret) and start Pythia.
 
 ## Development
 

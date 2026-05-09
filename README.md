@@ -1,3 +1,5 @@
+<img src="slack-app-icon.png" alt="Pythia" width="140" align="right">
+
 # Pythia
 
 [![CI](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml/badge.svg)](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml)
@@ -21,6 +23,7 @@ Get Pythia running in your Slack workspace in about five minutes. You need a Sla
 2. Paste the contents of [`slack-app-manifest.json`](slack-app-manifest.json) &rarr; **Next** &rarr; **Create**.
 3. **Basic Information** &rarr; **App-Level Tokens** &rarr; **Generate Token and Scopes** &rarr; name it anything, add scope `connections:write`, **Generate**. Copy the `xapp-...` token.
 4. **Install App** &rarr; **Install to Workspace** &rarr; **Allow**. Copy the **Bot User OAuth Token** (`xoxb-...`).
+5. *Optional:* **Basic Information** &rarr; **Display Information** &rarr; **App icon** &rarr; upload [`slack-app-icon.png`](slack-app-icon.png) from this repo for the Pythia avatar.
 
 ### 2. Get an LLM API key
 

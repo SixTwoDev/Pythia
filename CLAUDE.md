@@ -39,6 +39,8 @@ This file encodes the non-negotiables. When in doubt, re-read it.
 
 ## Tests
 
+- Always write tests for new behaviour in the same change. No "I'll add tests later."
+- Aim for ~90% line coverage, but never inflate coverage with tests that don't assert real behaviour. Cover behaviours, not lines. A trivial getter doesn't need a test; a branch that decides what the bot says does.
 - `uv run pytest` runs the whole suite with no other setup. CI runs the same command.
 - No tests hit real Slack, LLM, or third-party MCP APIs. Mock at the boundary.
 - Full suite under 30s. Slow tests are bugs.

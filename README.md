@@ -49,12 +49,16 @@ helm install pythia ./deploy/helm/pythia --set existingSecret=my-pythia-secret
 
 All configuration is via environment variables.
 
-| Variable | Required | Description |
-|---|---|---|
-| `SLACK_BOT_TOKEN` | yes | Bot token (`xoxb-...`) from your Slack app's *OAuth & Permissions* page. |
-| `SLACK_APP_TOKEN` | yes | App-level token (`xapp-...`) with `connections:write`, from *Basic Information*. |
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `SLACK_BOT_TOKEN` | yes | &mdash; | Bot token (`xoxb-...`) from your Slack app's *OAuth & Permissions* page. |
+| `SLACK_APP_TOKEN` | yes | &mdash; | App-level token (`xapp-...`) with `connections:write`, from *Basic Information*. |
+| `OPENAI_API_KEY` | yes | &mdash; | API key for your LLM provider. With the default `OPENAI_BASE_URL`, this is your OpenRouter key. |
+| `OPENAI_BASE_URL` | no | `https://openrouter.ai/api/v1` | Any OpenAI-compatible endpoint &mdash; OpenAI, Azure OpenAI, Ollama, vLLM, LM Studio, etc. |
+| `OPENAI_MODEL` | yes | &mdash; | Model identifier as exposed by your endpoint (e.g. `anthropic/claude-sonnet-4.5` on OpenRouter, `gpt-4o` on OpenAI). |
+| `PYTHIA_SYSTEM_PROMPT_FILE` | no | &mdash; | Path to a file whose contents replace the built-in system prompt. |
 
-More variables (LLM provider, MCP servers) will be added as those features land.
+More variables (MCP servers) will be added as those features land.
 
 ## Slack app setup
 

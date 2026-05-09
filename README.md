@@ -1,5 +1,8 @@
 # Pythia
 
+[![CI](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml/badge.svg)](https://github.com/SixTwoDev/Pythia/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 An open-source Slack bot that connects an LLM to arbitrary [MCP](https://modelcontextprotocol.io) servers. Mention Pythia in Slack and it answers using whatever tools you've configured. Stateless, single container, configured by environment variables.
 
 ## Why

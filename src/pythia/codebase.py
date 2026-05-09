@@ -103,20 +103,42 @@ def read_grounding_docs(repos: dict[str, Repo]) -> str:
 
     Each file is capped at ~6k chars so a few large guides don't dominate the
     context window. Empty string when no repo has any of these files.
+
+    Symlinks are rejected: a malicious repo could ship `CLAUDE.md` as a
+    symlink to `/etc/passwd` or `~/.ssh/id_rsa` and exfiltrate it into the
+    system prompt. We resolve the candidate path and require it to live
+    inside the cloned repo root.
     """
     sections: list[str] = []
     for name, repo in repos.items():
         for filename in GROUNDING_DOC_CANDIDATES:
-            path = repo.local_path / filename
-            if not path.is_file():
+            content = _read_grounding_doc(name, repo, filename)
+            if content is None:
                 continue
-            content = path.read_text(encoding="utf-8", errors="replace").strip()
-            if len(content) > GROUNDING_DOC_MAX_CHARS:
-                content = content[:GROUNDING_DOC_MAX_CHARS] + "\n\n[…truncated]"
             sections.append(f"## {name} ({filename})\n\n{content}")
-            logger.info("loaded grounding doc %s/%s (%d chars)", name, filename, len(content))
             break
     return "\n\n---\n\n".join(sections)
+
+
+def _read_grounding_doc(name: str, repo: Repo, filename: str) -> str | None:
+    candidate = repo.local_path / filename
+    if not candidate.exists():
+        return None
+    if candidate.is_symlink():
+        logger.warning("ignoring symlinked grounding doc %s/%s", name, filename)
+        return None
+    root = repo.local_path.resolve()
+    resolved = candidate.resolve()
+    if not resolved.is_relative_to(root) or not resolved.is_file():
+        logger.warning(
+            "ignoring grounding doc %s/%s — escapes repo root or not a file", name, filename
+        )
+        return None
+    content = resolved.read_text(encoding="utf-8", errors="replace").strip()
+    if len(content) > GROUNDING_DOC_MAX_CHARS:
+        content = content[:GROUNDING_DOC_MAX_CHARS] + "\n\n[…truncated]"
+    logger.info("loaded grounding doc %s/%s (%d chars)", name, filename, len(content))
+    return content
 
 
 def build_codebase_tools(repos: dict[str, Repo]) -> list[Callable[..., object]]:

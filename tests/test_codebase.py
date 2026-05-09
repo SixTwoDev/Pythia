@@ -254,3 +254,31 @@ def test_read_grounding_docs_truncates_files_above_the_size_cap(tmp_path: Path) 
     out = read_grounding_docs(repos)
     assert "[…truncated]" in out
     assert len(out) < GROUNDING_DOC_MAX_CHARS + 500
+
+
+def test_read_grounding_docs_ignores_symlinked_claude_md_pointing_outside_repo(
+    tmp_path: Path,
+) -> None:
+    secret = tmp_path / "secret.txt"
+    secret.write_text("private contents that must not leak", encoding="utf-8")
+    repos = {"r": _repo_with_files(tmp_path, "r", {"AGENTS.md": "real agents content"})}
+    # Plant a symlinked CLAUDE.md pointing outside the repo root.
+    (repos["r"].local_path / "CLAUDE.md").symlink_to(secret)
+
+    out = read_grounding_docs(repos)
+
+    assert "private contents" not in out
+    # CLAUDE.md was rejected, so we fall through to AGENTS.md.
+    assert "real agents content" in out
+    assert "AGENTS.md" in out
+
+
+def test_read_grounding_docs_ignores_in_tree_symlinks_too(tmp_path: Path) -> None:
+    # Defense in depth — even an in-tree symlink is rejected so future stricter
+    # checks (e.g. whitelisted relative paths) can't be defeated by aliasing.
+    repos = {"r": _repo_with_files(tmp_path, "r", {"NOTES.md": "in-tree content"})}
+    (repos["r"].local_path / "CLAUDE.md").symlink_to(repos["r"].local_path / "NOTES.md")
+
+    out = read_grounding_docs(repos)
+
+    assert out == ""

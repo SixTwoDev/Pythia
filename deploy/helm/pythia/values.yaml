@@ -6,14 +6,41 @@ image:
 imagePullSecrets: []
 
 # Slack credentials. Required.
-# Either set the values here (will be templated into a Secret),
-# or set existingSecret to the name of a pre-existing Secret containing
-# SLACK_BOT_TOKEN and SLACK_APP_TOKEN keys.
 slack:
   botToken: ""
   appToken: ""
 
+# LLM. Required (apiKey + model).
+# baseUrl defaults to OpenRouter; override for OpenAI, Azure, Ollama, vLLM, etc.
+llm:
+  apiKey: ""
+  baseUrl: "https://openrouter.ai/api/v1"
+  model: ""
+
+# Bring-your-own Secret containing SLACK_BOT_TOKEN, SLACK_APP_TOKEN, OPENAI_API_KEY,
+# and optionally CODEBASE_REPOS. When set, slack.* and llm.apiKey are ignored.
 existingSecret: ""
+
+# MCP servers. Optional.
+# Provide an existing Secret with key `mcp-servers.json` (the Claude-Desktop-shaped JSON).
+# Mounted at /etc/pythia/mcp-servers.json; MCP_SERVERS_CONFIG is set automatically.
+mcp:
+  existingSecret: ""
+
+# System prompt override. Optional.
+# Provide an existing ConfigMap with key `system-prompt.md`.
+# Mounted at /etc/pythia/system-prompt.md; PYTHIA_SYSTEM_PROMPT_FILE is set automatically.
+prompt:
+  existingConfigMap: ""
+
+# Codebase. Optional.
+# repos:             same comma-separated string as the CODEBASE_REPOS env var.
+# sshExistingSecret: name of a Secret with key `id_rsa`. Mounted at /etc/pythia/ssh
+#                    with mode 0400; GIT_SSH_COMMAND is set automatically and uses
+#                    `accept-new` host-key checking with a writable known_hosts in /tmp.
+codebase:
+  repos: ""
+  sshExistingSecret: ""
 
 resources: {}
 nodeSelector: {}

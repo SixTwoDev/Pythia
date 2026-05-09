@@ -31,8 +31,64 @@ spec:
           envFrom:
             - secretRef:
                 name: {{ include "pythia.secretName" . }}
+          env:
+            - name: OPENAI_BASE_URL
+              value: {{ .Values.llm.baseUrl | quote }}
+            - name: OPENAI_MODEL
+              value: {{ required "llm.model is required" .Values.llm.model | quote }}
+            {{- if .Values.mcp.existingSecret }}
+            - name: MCP_SERVERS_CONFIG
+              value: /etc/pythia/mcp-servers.json
+            {{- end }}
+            {{- if .Values.prompt.existingConfigMap }}
+            - name: PYTHIA_SYSTEM_PROMPT_FILE
+              value: /etc/pythia/system-prompt.md
+            {{- end }}
+            {{- if .Values.codebase.sshExistingSecret }}
+            - name: GIT_SSH_COMMAND
+              value: "ssh -i /etc/pythia/ssh/id_rsa -o UserKnownHostsFile=/tmp/known_hosts -o StrictHostKeyChecking=accept-new"
+            {{- end }}
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+            {{- if .Values.mcp.existingSecret }}
+            - name: mcp-config
+              mountPath: /etc/pythia/mcp-servers.json
+              subPath: mcp-servers.json
+              readOnly: true
+            {{- end }}
+            {{- if .Values.prompt.existingConfigMap }}
+            - name: system-prompt
+              mountPath: /etc/pythia/system-prompt.md
+              subPath: system-prompt.md
+              readOnly: true
+            {{- end }}
+            {{- if .Values.codebase.sshExistingSecret }}
+            - name: ssh
+              mountPath: /etc/pythia/ssh
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+        {{- if .Values.mcp.existingSecret }}
+        - name: mcp-config
+          secret:
+            secretName: {{ .Values.mcp.existingSecret }}
+        {{- end }}
+        {{- if .Values.prompt.existingConfigMap }}
+        - name: system-prompt
+          configMap:
+            name: {{ .Values.prompt.existingConfigMap }}
+        {{- end }}
+        {{- if .Values.codebase.sshExistingSecret }}
+        - name: ssh
+          secret:
+            secretName: {{ .Values.codebase.sshExistingSecret }}
+            defaultMode: 0o400
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

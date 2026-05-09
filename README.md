@@ -1,4 +1,6 @@
-<img src="slack-app-icon.png" alt="Pythia" width="140" align="right">
+<p align="center">
+  <img src="slack-app-icon.png" alt="Pythia" width="160">
+</p>
 
 # Pythia
 

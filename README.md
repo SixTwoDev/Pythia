@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="slack-app-icon.png" alt="Pythia" width="160">
+  <img src="slack-app-icon.png" alt="Pythia" width="200">
 </p>
 
 # Pythia

@@ -1,0 +1,32 @@
+image:
+  repository: ghcr.io/sixtwodev/pythia
+  tag: ""  # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+# Slack credentials. Required.
+# Either set the values here (will be templated into a Secret),
+# or set existingSecret to the name of a pre-existing Secret containing
+# SLACK_BOT_TOKEN and SLACK_APP_TOKEN keys.
+slack:
+  botToken: ""
+  appToken: ""
+
+existingSecret: ""
+
+resources: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

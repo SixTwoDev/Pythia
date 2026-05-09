@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     pythia_system_prompt_file: str | None = None
     mcp_servers_config: str | None = None
+    codebase_repos: str | None = None
 
 
 def load() -> Settings:

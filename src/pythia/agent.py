@@ -1,3 +1,4 @@
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from pydantic_ai import Agent
@@ -31,13 +32,18 @@ def _mcp_servers(settings: Settings) -> list[MCPServer]:
     return list(load_mcp_servers(settings.mcp_servers_config))
 
 
-def build_agent(settings: Settings) -> Agent[None, str]:
+def build_agent(
+    settings: Settings,
+    *,
+    extra_tools: Sequence[Callable[..., object]] = (),
+) -> Agent[None, str]:
     provider = OpenAIProvider(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
     model = OpenAIChatModel(settings.openai_model, provider=provider)
     return Agent(
         model,
         system_prompt=_system_prompt(settings),
         toolsets=_mcp_servers(settings),
+        tools=list(extra_tools),
     )
 
 

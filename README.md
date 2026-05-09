@@ -61,6 +61,7 @@ All configuration is via environment variables.
 | `OPENAI_MODEL` | yes | &mdash; | Model identifier as exposed by your endpoint (e.g. `anthropic/claude-sonnet-4.5` on OpenRouter, `gpt-4o` on OpenAI). |
 | `PYTHIA_SYSTEM_PROMPT_FILE` | no | &mdash; | Path to a file whose contents replace the built-in system prompt. |
 | `MCP_SERVERS_CONFIG` | no | &mdash; | Path to a JSON file declaring MCP servers (see below). Without it, Pythia runs with no tools and just answers from the conversation. |
+| `CODEBASE_REPOS` | no | &mdash; | Comma-separated list of git repos to clone on startup &mdash; either `NAME=URL` or just `URL`. Pythia exposes `search_code` and `read_file` tools over them. Needs `git` and `ripgrep` on PATH (the published Docker image bundles both). |
 
 ## MCP servers
 
@@ -102,6 +103,27 @@ Point `MCP_SERVERS_CONFIG` at the file, mount it into the container, and the age
 ```
 
 The dict key (e.g. `"datadog"`) becomes the server's `tool_prefix` automatically, so `search` from `datadog` and `search` from another server won't collide.
+
+## Codebase access
+
+Set `CODEBASE_REPOS` to a comma-separated list of git URLs (or `name=url` pairs) and Pythia will shallow-clone each into a tempdir on startup, then expose two tools to the LLM:
+
+- `search_code(repo, query)` &mdash; ripgrep regex search across the named repo, capped at 50 results (10 per file).
+- `read_file(repo, path, start_line, end_line)` &mdash; reads a file from the named repo. Path traversal is blocked; only files inside the cloned repo are readable.
+
+Examples:
+
+```sh
+# one repo (name auto-derived as "api")
+CODEBASE_REPOS=git@github.com:acme/api.git
+
+# multiple repos with explicit names
+CODEBASE_REPOS=api=git@github.com:acme/api.git,web=https://github.com/acme/web.git
+```
+
+Auth uses whatever `git clone` would use &mdash; mount an SSH key into the container for `git@…` URLs, or embed a token in HTTPS URLs (`https://x:TOKEN@github.com/...`).
+
+The clones live in a tempdir for the lifetime of the process and are deleted on shutdown. To refresh, restart the bot.
 
 ## Slack app setup
 

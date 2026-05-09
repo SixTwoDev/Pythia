@@ -3,10 +3,23 @@ from pathlib import Path
 import pytest
 from pydantic_ai import Agent
 from pydantic_ai.mcp import MCPServer
+from pydantic_ai.messages import (
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.test import TestModel
 
-from pythia.agent import DEFAULT_SYSTEM_PROMPT, _system_prompt, answer, build_agent
+from pythia.agent import (
+    DEFAULT_SYSTEM_PROMPT,
+    _log_event,
+    _system_prompt,
+    _truncate,
+    answer,
+    build_agent,
+)
 from pythia.config import Settings
 
 
@@ -64,3 +77,56 @@ async def test_answer_runs_the_agent_and_returns_its_output_as_a_string() -> Non
     with agent.override(model=TestModel(custom_output_text="hello from pythia")):
         reply = await answer(agent, "any prompt")
     assert reply == "hello from pythia"
+
+
+def test_truncate_returns_short_values_unchanged() -> None:
+    assert _truncate("short") == "short"
+
+
+def test_truncate_clips_long_values_with_ellipsis() -> None:
+    assert _truncate("x" * 500) == "x" * 199 + "…"
+
+
+def test_log_event_logs_tool_call_with_name_and_args(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    event = FunctionToolCallEvent(
+        part=ToolCallPart(
+            tool_name="search_code",
+            args={"repo": "pythia", "query": "load_mcp"},
+            tool_call_id="call-1",
+        )
+    )
+    with caplog.at_level("INFO", logger="pythia.agent"):
+        _log_event(event)
+    assert "tool call → search_code" in caplog.text
+    assert "load_mcp" in caplog.text
+
+
+def test_log_event_logs_tool_result_with_outcome_and_elapsed(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    call = FunctionToolCallEvent(
+        part=ToolCallPart(tool_name="read_file", args={"path": "x.py"}, tool_call_id="call-2")
+    )
+    result = FunctionToolResultEvent(
+        part=ToolReturnPart(tool_name="read_file", content="file contents", tool_call_id="call-2")
+    )
+    with caplog.at_level("INFO", logger="pythia.agent"):
+        _log_event(call)
+        _log_event(result)
+    assert "tool result ← read_file [success]" in caplog.text
+    assert "file contents" in caplog.text
+    assert "ms)" in caplog.text
+
+
+def test_log_event_handles_orphan_result_without_recorded_start(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    result = FunctionToolResultEvent(
+        part=ToolReturnPart(tool_name="rogue", content="anything", tool_call_id="never-seen-before")
+    )
+    with caplog.at_level("INFO", logger="pythia.agent"):
+        _log_event(result)
+    assert "tool result ← rogue" in caplog.text
+    assert "(?)" in caplog.text

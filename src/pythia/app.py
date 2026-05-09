@@ -10,7 +10,13 @@ from slack_bolt.context.say.async_say import AsyncSay
 from slack_sdk.web.async_client import AsyncWebClient
 
 from pythia.agent import answer, build_agent
-from pythia.codebase import build_codebase_tools, clone_all, parse_repos, require_binaries
+from pythia.codebase import (
+    build_codebase_tools,
+    clone_all,
+    parse_repos,
+    read_grounding_docs,
+    require_binaries,
+)
 from pythia.config import load
 from pythia.slack_format import to_slack_mrkdwn
 from pythia.slack_thread import fetch_thread, format_thread
@@ -64,7 +70,11 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="pythia-repos-") as tmp:
         repos = await clone_all(repo_specs, Path(tmp))
-        agent = build_agent(settings, extra_tools=build_codebase_tools(repos))
+        agent = build_agent(
+            settings,
+            extra_tools=build_codebase_tools(repos),
+            grounding_docs=read_grounding_docs(repos),
+        )
         app = AsyncApp(token=settings.slack_bot_token)
         auth = await app.client.auth_test()
         bot_user_id = str(auth["user_id"])

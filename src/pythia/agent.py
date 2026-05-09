@@ -79,16 +79,32 @@ async def _log_events(
         _log_event(event)
 
 
+_GROUNDING_PREFIX = (
+    "# Codebase context\n\n"
+    "The following grounding docs were loaded from each codebase you can search. "
+    "Treat them as authoritative project conventions; cite specific files when you "
+    "reference behaviour described here.\n\n"
+)
+
+
+def _system_prompts(settings: Settings, grounding_docs: str) -> list[str]:
+    prompts = [_system_prompt(settings)]
+    if grounding_docs:
+        prompts.append(_GROUNDING_PREFIX + grounding_docs)
+    return prompts
+
+
 def build_agent(
     settings: Settings,
     *,
     extra_tools: Sequence[Callable[..., object]] = (),
+    grounding_docs: str = "",
 ) -> Agent[None, str]:
     provider = OpenAIProvider(api_key=settings.openai_api_key, base_url=settings.openai_base_url)
     model = OpenAIChatModel(settings.openai_model, provider=provider)
     return Agent(
         model,
-        system_prompt=_system_prompt(settings),
+        system_prompt=_system_prompts(settings, grounding_docs),
         toolsets=_mcp_servers(settings),
         tools=list(extra_tools),
         event_stream_handler=_log_events,

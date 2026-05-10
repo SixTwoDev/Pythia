@@ -175,6 +175,24 @@ The dict key (e.g. `"datadog"`) becomes the server's `tool_prefix` automatically
 
 Drop-in configs are in [`examples/mcp-servers/`](examples/mcp-servers/) — `minimal.json` (time + filesystem, zero auth) is a good smoke-test starting point.
 
+### Authentication
+
+MCP servers vary widely in how they expect to be authenticated. Pythia handles this with no special machinery &mdash; the JSON config supports `${VAR}` expansion, the bot inherits its environment to subprocess servers, and the MCP server reads its own credentials. That covers two of the three real auth patterns cleanly:
+
+- **Static API tokens / API keys** &mdash; Datadog, Linear, GitHub PATs, OpenAI keys, internal services. Generate the token once, drop it in your env / Secret, reference it from the JSON: `"env": { "DD_API_KEY": "${DD_API_KEY}" }`. Roughly 80% of useful MCP servers fall here.
+- **Service accounts** &mdash; GitHub App installation tokens, Atlassian API tokens, Google Workspace service accounts, "bot" identities in your SaaS. Same pattern: provision a "Pythia bot" identity in the upstream system, generate credentials, env-var them in. Trade-off: every query runs as the bot identity &mdash; audit logs show "Pythia did this" rather than the asking user, and the bot sees what the bot has access to. Usually fine for an internal team bot.
+
+The third pattern Pythia does **not** support today:
+
+- **Per-user OAuth flows** &mdash; Atlassian's hosted MCP server, Notion's MCP, the official Google Drive MCP for personal accounts. These expect "open a browser, log in as the human, get a per-user token, use it for that human's queries." A Slack bot in Socket Mode has no public callback URL, no per-user token store, and no obvious way to surface a "click here to authorize" prompt. Implementing this properly would mean an HTTP server, a database, per-MCP OAuth dances, and Slack-side auth UX &mdash; that's a different product, not a feature.
+
+If you need an OAuth-only MCP, the realistic options are:
+
+1. **Use a service-account variant if one exists.** Atlassian, GitHub, Notion, and Google Workspace all offer non-OAuth alternatives. Almost always the right answer for an internal team bot.
+2. **Run Pythia locally first** to complete the browser OAuth interactively, then deploy with the cached token. Works until the refresh window closes.
+3. **Use a hosted MCP gateway** like [Composio](https://composio.dev) or [Pipedream Connect](https://pipedream.com/connect). They manage the OAuth flows centrally and expose a single bearer-token MCP endpoint that Pythia connects to like any other HTTP MCP server.
+4. **Run a small MCP proxy of your own** as a separate service. Proxy holds the OAuth tokens, exposes HTTP MCP endpoints to Pythia, manages refresh. Keep it as its own repo &mdash; the proxy needs an HTTP server and persistent storage, both of which are explicitly off-limits in Pythia itself.
+
 ## Codebase access
 
 Set `CODEBASE_REPOS` to a comma-separated list of git URLs (or `name=url` pairs) and Pythia will shallow-clone each into a tempdir on startup, then expose two tools to the LLM:

@@ -1,16 +1,35 @@
+import io
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 import pytest
+from PIL import Image
 from pydantic_ai.messages import BinaryContent
 
 from pythia import slack_files as slack_files_module
 from pythia.slack_files import (
+    MAX_IMAGE_DIMENSION,
     FileAttachment,
     download_file,
+    downscale_image,
     extract_file_metas,
     to_user_content,
 )
+
+
+def _png_bytes(size: tuple[int, int], mode: str = "RGB") -> bytes:
+    color = (120, 130, 140) if mode == "RGB" else (120, 130, 140, 200)
+    img = Image.new(mode, size, color=color)
+    out = io.BytesIO()
+    img.save(out, format="PNG")
+    return out.getvalue()
+
+
+def _jpeg_bytes(size: tuple[int, int]) -> bytes:
+    img = Image.new("RGB", size, color=(50, 100, 150))
+    out = io.BytesIO()
+    img.save(out, format="JPEG", quality=90)
+    return out.getvalue()
 
 
 def test_extract_file_metas_returns_files_with_a_download_url() -> None:
@@ -127,3 +146,63 @@ def test_to_user_content_returns_none_for_unsupported_binary_types() -> None:
 def test_to_user_content_returns_none_for_undecodable_text() -> None:
     att = FileAttachment(name="weird.log", mimetype="text/plain", data=b"\xff\xfe\xfd not utf-8")
     assert to_user_content(att) is None
+
+
+# --- image downscaling ------------------------------------------------------
+
+
+def test_downscale_image_passes_small_images_through_unchanged() -> None:
+    original = _jpeg_bytes((800, 600))
+    data, mimetype = downscale_image(original, "image/jpeg")
+    assert data == original
+    assert mimetype == "image/jpeg"
+
+
+def test_downscale_image_shrinks_large_images_to_fit_max_dimension() -> None:
+    original = _jpeg_bytes((4000, 3000))
+    data, mimetype = downscale_image(original, "image/jpeg")
+    out = Image.open(io.BytesIO(data))
+    assert max(out.size) <= MAX_IMAGE_DIMENSION
+    width, height = out.size
+    assert abs((width / height) - (4000 / 3000)) < 0.01  # aspect ratio preserved
+    assert mimetype == "image/jpeg"
+    assert len(data) < len(original)
+
+
+def test_downscale_image_keeps_png_when_source_has_transparency() -> None:
+    original = _png_bytes((3000, 3000), mode="RGBA")
+    data, mimetype = downscale_image(original, "image/png")
+    assert mimetype == "image/png"
+    out = Image.open(io.BytesIO(data))
+    assert out.mode in ("RGBA", "LA", "P")
+    assert max(out.size) <= MAX_IMAGE_DIMENSION
+
+
+def test_downscale_image_converts_opaque_png_to_jpeg_for_byte_savings() -> None:
+    original = _png_bytes((3000, 3000), mode="RGB")
+    data, mimetype = downscale_image(original, "image/png")
+    assert mimetype == "image/jpeg"
+    assert len(data) < len(original)
+
+
+def test_downscale_image_returns_input_unchanged_for_unsupported_types() -> None:
+    raw = b"<svg></svg>"
+    data, mimetype = downscale_image(raw, "image/svg+xml")
+    assert data == raw
+    assert mimetype == "image/svg+xml"
+
+
+def test_downscale_image_returns_input_unchanged_when_pillow_cant_parse() -> None:
+    raw = b"not a real image"
+    data, mimetype = downscale_image(raw, "image/jpeg")
+    assert data == raw
+    assert mimetype == "image/jpeg"
+
+
+def test_to_user_content_downscales_oversized_images_before_wrapping() -> None:
+    original = _jpeg_bytes((3000, 2000))
+    att = FileAttachment(name="screen.jpg", mimetype="image/jpeg", data=original)
+    content = to_user_content(att)
+    assert isinstance(content, BinaryContent)
+    out = Image.open(io.BytesIO(content.data))
+    assert max(out.size) <= MAX_IMAGE_DIMENSION

@@ -61,7 +61,7 @@ async def test_respond_posts_placeholder_then_updates_with_the_real_answer() -> 
     say = _fake_say(placeholder_ts="200.5")
     event = {"channel": "C9", "ts": "100.0", "thread_ts": "99.0"}
 
-    await respond_to_mention(agent, client, say, BOT_USER_ID, event)
+    await respond_to_mention(agent, client, say, BOT_USER_ID, "xoxb-test", event)
 
     say.assert_awaited_once_with(text=PLACEHOLDER_REPLY, thread_ts="99.0")
     client.conversations_replies.assert_awaited_once_with(channel="C9", ts="99.0", limit=200)
@@ -84,7 +84,7 @@ async def test_respond_falls_back_to_event_ts_when_no_thread_ts_present() -> Non
     say = _fake_say()
     event = {"channel": "C9", "ts": "100.0"}
 
-    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, event)
+    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, "xoxb-test", event)
 
     client.conversations_replies.assert_awaited_once_with(channel="C9", ts="100.0", limit=200)
     assert say.await_args is not None
@@ -99,7 +99,7 @@ async def test_respond_updates_placeholder_with_error_when_agent_raises() -> Non
     say = _fake_say(placeholder_ts="200.0")
     event = {"channel": "C9", "ts": "100.0"}
 
-    await respond_to_mention(agent, client, say, BOT_USER_ID, event)
+    await respond_to_mention(agent, client, say, BOT_USER_ID, "xoxb-test", event)
 
     client.chat_update.assert_awaited_once_with(channel="C9", ts="200.0", text=ERROR_REPLY)
 
@@ -111,7 +111,7 @@ async def test_respond_updates_placeholder_with_error_when_slack_fetch_raises() 
     say = _fake_say(placeholder_ts="200.0")
     event = {"channel": "C9", "ts": "100.0"}
 
-    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, event)
+    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, "xoxb-test", event)
 
     client.chat_update.assert_awaited_once_with(channel="C9", ts="200.0", text=ERROR_REPLY)
 
@@ -122,7 +122,7 @@ async def test_respond_aborts_silently_when_placeholder_post_fails() -> None:
     say = AsyncMock(side_effect=RuntimeError("permission denied"))
     event = {"channel": "C9", "ts": "100.0"}
 
-    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, event)
+    await respond_to_mention(_fake_agent(), client, say, BOT_USER_ID, "xoxb-test", event)
 
     client.chat_update.assert_not_awaited()
     client.conversations_replies.assert_not_awaited()

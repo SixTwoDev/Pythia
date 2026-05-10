@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
+from pydantic_ai.messages import UserContent
 from slack_bolt.adapter.socket_mode.async_handler import AsyncSocketModeHandler
 from slack_bolt.async_app import AsyncApp
 from slack_bolt.context.ack.async_ack import AsyncAck
@@ -19,6 +20,7 @@ from pythia.codebase import (
     require_binaries,
 )
 from pythia.config import load
+from pythia.slack_files import download_file, extract_file_metas, to_user_content
 from pythia.slack_format import format_tool_trace, to_slack_mrkdwn
 from pythia.slack_thread import fetch_thread, format_thread
 
@@ -163,11 +165,33 @@ async def collapse_tool_trace(client: AsyncWebClient, body: dict[str, Any]) -> N
     await _update_with_blocks(client, body, [*base, _show_button(trace, count)])
 
 
+async def _build_user_prompt(
+    messages: list[dict[str, Any]], bot_user_id: str, bot_token: str
+) -> str | list[UserContent]:
+    """Format the thread as text and pull any uploaded files in alongside it.
+
+    Returns a plain string when no usable attachments are present (so we keep
+    the simpler API path for the common case) and a list of mixed UserContent
+    when there are images or text files to include.
+    """
+    text = format_thread(messages, bot_user_id)
+    parts: list[UserContent] = [text]
+    for meta in extract_file_metas(messages):
+        attachment = await download_file(meta, bot_token)
+        if attachment is None:
+            continue
+        content = to_user_content(attachment)
+        if content is not None:
+            parts.append(content)
+    return text if len(parts) == 1 else parts
+
+
 async def respond_to_mention(
     agent: Agent[None, str],
     client: AsyncWebClient,
     say: AsyncSay,
     bot_user_id: str,
+    bot_token: str,
     event: dict[str, Any],
 ) -> None:
     thread_ts: str = event.get("thread_ts") or event["ts"]
@@ -183,7 +207,7 @@ async def respond_to_mention(
 
     try:
         messages = await fetch_thread(client, channel, thread_ts)
-        prompt = format_thread(messages, bot_user_id)
+        prompt = await _build_user_prompt(messages, bot_user_id, bot_token)
         reply = await answer(agent, prompt)
         text = to_slack_mrkdwn(reply.text)
         await client.chat_update(
@@ -197,10 +221,12 @@ async def respond_to_mention(
         await client.chat_update(channel=channel, ts=placeholder_ts, text=ERROR_REPLY)
 
 
-def register_handlers(app: AsyncApp, agent: Agent[None, str], bot_user_id: str) -> None:
+def register_handlers(
+    app: AsyncApp, agent: Agent[None, str], bot_user_id: str, bot_token: str
+) -> None:
     @app.event("app_mention")
     async def handle_mention(event: dict[str, Any], client: AsyncWebClient, say: AsyncSay) -> None:
-        await respond_to_mention(agent, client, say, bot_user_id, event)
+        await respond_to_mention(agent, client, say, bot_user_id, bot_token, event)
 
     @app.action(ACTION_SHOW_TOOL_TRACE)
     async def handle_show(ack: AsyncAck, body: dict[str, Any], client: AsyncWebClient) -> None:
@@ -230,7 +256,7 @@ async def main() -> None:
         app = AsyncApp(token=settings.slack_bot_token)
         auth = await app.client.auth_test()
         bot_user_id = str(auth["user_id"])
-        register_handlers(app, agent, bot_user_id)
+        register_handlers(app, agent, bot_user_id, settings.slack_bot_token)
         handler = AsyncSocketModeHandler(app, settings.slack_app_token)
         logger.info(
             "Starting Pythia in Socket Mode as user %s with %d repo(s)",

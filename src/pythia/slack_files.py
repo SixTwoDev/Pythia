@@ -95,7 +95,18 @@ async def download_file(meta: dict[str, Any], bot_token: str) -> FileAttachment 
             session.get(url, headers=headers) as response,
         ):
             response.raise_for_status()
-            data = await response.read()
+            buffer = bytearray()
+            async for chunk in response.content.iter_chunked(64 * 1024):
+                buffer.extend(chunk)
+                if len(buffer) > MAX_FILE_BYTES:
+                    logger.info(
+                        "aborting download of %s — exceeded %d bytes (size hint was %d)",
+                        name,
+                        MAX_FILE_BYTES,
+                        size,
+                    )
+                    return None
+            data = bytes(buffer)
     except Exception:
         logger.exception("failed to download Slack file %s", name)
         return None

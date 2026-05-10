@@ -47,14 +47,22 @@ def test_extract_file_metas_handles_messages_without_a_files_key() -> None:
     assert extract_file_metas([{"text": "hi"}, {"text": "hello"}]) == []
 
 
-@pytest.mark.asyncio
-async def test_download_file_returns_attachment_on_success(
-    monkeypatch: pytest.MonkeyPatch,
+def _install_fake_aiohttp(
+    monkeypatch: pytest.MonkeyPatch, chunks: list[bytes], captured: dict[str, Any] | None = None
 ) -> None:
-    captured: dict[str, Any] = {}
-    payload = b"hello bytes"
+    """Patch aiohttp.ClientSession with a fake that yields the given chunks
+    from response.content.iter_chunked() — the streaming path the download
+    code uses to enforce a memory-bounded cap."""
+    sink: dict[str, Any] = captured if captured is not None else {}
+
+    class _FakeContent:
+        async def iter_chunked(self, _size: int) -> Any:
+            for chunk in chunks:
+                yield chunk
 
     class _FakeResp:
+        content = _FakeContent()
+
         async def __aenter__(self) -> "_FakeResp":
             return self
 
@@ -63,9 +71,6 @@ async def test_download_file_returns_attachment_on_success(
 
         def raise_for_status(self) -> None:
             return None
-
-        async def read(self) -> bytes:
-            return payload
 
     class _FakeSession:
         def __init__(self, *_args: object, **_kwargs: object) -> None:
@@ -78,11 +83,20 @@ async def test_download_file_returns_attachment_on_success(
             return None
 
         def get(self, url: str, headers: dict[str, str]) -> _FakeResp:
-            captured["url"] = url
-            captured["headers"] = headers
+            sink["url"] = url
+            sink["headers"] = headers
             return _FakeResp()
 
     monkeypatch.setattr(slack_files_module.aiohttp, "ClientSession", _FakeSession)
+
+
+@pytest.mark.asyncio
+async def test_download_file_returns_attachment_on_success(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    payload = b"hello bytes"
+    _install_fake_aiohttp(monkeypatch, [payload], captured)
     meta = {
         "url_private_download": "https://files.slack.com/x",
         "name": "log.txt",
@@ -94,6 +108,44 @@ async def test_download_file_returns_attachment_on_success(
     assert attachment == FileAttachment(name="log.txt", mimetype="text/plain", data=payload)
     assert captured["url"] == "https://files.slack.com/x"
     assert captured["headers"] == {"Authorization": "Bearer xoxb-test"}
+
+
+@pytest.mark.asyncio
+async def test_download_file_aborts_when_streamed_bytes_exceed_cap_despite_size_hint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Slack metadata claims the file is small, but the actual stream is huge.
+    # The streaming cap must catch this even though the pre-flight size check
+    # passed — that's the whole point of bounding memory at read time.
+    over_cap = slack_files_module.MAX_FILE_BYTES + 1024
+    chunks = [b"x" * (256 * 1024) for _ in range((over_cap // (256 * 1024)) + 1)]
+    _install_fake_aiohttp(monkeypatch, chunks)
+    meta = {
+        "url_private_download": "https://files.slack.com/x",
+        "name": "lying.bin",
+        "mimetype": "application/octet-stream",
+        "size": 100,  # blatant lie — actual stream is much larger
+    }
+    assert await download_file(meta, "xoxb-test") is None
+
+
+@pytest.mark.asyncio
+async def test_download_file_handles_missing_size_metadata(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If Slack omits the size field entirely, the pre-flight check would
+    # pass (treats missing as 0); the streaming cap is the only thing
+    # standing between us and an unbounded download.
+    over_cap = slack_files_module.MAX_FILE_BYTES + 1024
+    chunks = [b"y" * (512 * 1024) for _ in range((over_cap // (512 * 1024)) + 1)]
+    _install_fake_aiohttp(monkeypatch, chunks)
+    meta = {
+        "url_private_download": "https://files.slack.com/x",
+        "name": "no-size.bin",
+        "mimetype": "application/octet-stream",
+        # no `size` key at all
+    }
+    assert await download_file(meta, "xoxb-test") is None
 
 
 @pytest.mark.asyncio

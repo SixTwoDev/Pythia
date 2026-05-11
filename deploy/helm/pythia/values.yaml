@@ -61,6 +61,17 @@ nodeSelector: {}
 tolerations: []
 affinity: {}
 
+# Liveness probe runs `pythia-healthcheck` (a small console script in the
+# image) which exits 0 iff the heartbeat file mtime is fresh. Disable by
+# setting enabled: false. There's no readinessProbe by design — Socket Mode
+# means there's no inbound traffic to gate.
+livenessProbe:
+  enabled: true
+  initialDelaySeconds: 30
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 3
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 1000

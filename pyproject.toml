@@ -16,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 pythia = "pythia.__main__:cli"
+pythia-healthcheck = "pythia.health:healthcheck_cli"
 
 [project.urls]
 Homepage = "https://github.com/SixTwoDev/Pythia"

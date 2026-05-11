@@ -23,6 +23,7 @@ from pythia.codebase import (
     run_refresh_loop,
 )
 from pythia.config import load
+from pythia.health import heartbeat_loop
 from pythia.slack_files import download_file, extract_file_metas, to_user_content
 from pythia.slack_format import format_tool_trace, to_slack_mrkdwn
 from pythia.slack_thread import fetch_thread, format_thread
@@ -304,10 +305,17 @@ async def main() -> None:
         refresh_task = asyncio.create_task(
             run_refresh_loop(repos, repo_locks, settings.codebase_refresh_interval_seconds)
         )
+        heartbeat_task = asyncio.create_task(
+            heartbeat_loop(
+                settings.pythia_heartbeat_path,
+                settings.pythia_heartbeat_interval_seconds,
+            )
+        )
         try:
             async with agent.run_mcp_servers():
                 await handler.start_async()
         finally:
-            refresh_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await refresh_task
+            for task in (refresh_task, heartbeat_task):
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task

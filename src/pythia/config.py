@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     llm_timeout_seconds: float = 60.0
     llm_max_attempts: int = 4
 
+    pythia_heartbeat_path: str = "/tmp/pythia/heartbeat"
+    pythia_heartbeat_interval_seconds: int = 30
+
 
 def load() -> Settings:
     return Settings()  # pyright: ignore[reportCallIssue]

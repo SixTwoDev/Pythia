@@ -13,6 +13,7 @@ from pythia.app import (
     TRACE_BLOCK_ID,
     collapse_tool_trace,
     expand_tool_trace,
+    parse_allowed_channels,
     reply_blocks,
     respond_to_mention,
 )
@@ -259,3 +260,59 @@ async def test_collapse_removes_trace_section_and_swaps_button_to_show() -> None
     assert TRACE_ACTIONS_BLOCK_ID in block_ids
     actions_block = next(b for b in new_blocks if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
     assert actions_block["elements"][0]["action_id"] == ACTION_SHOW_TOOL_TRACE
+
+
+# --- channel allowlist ------------------------------------------------------
+
+
+def test_parse_allowed_channels_returns_none_when_unset() -> None:
+    assert parse_allowed_channels(None) is None
+
+
+def test_parse_allowed_channels_splits_and_trims() -> None:
+    assert parse_allowed_channels("C1, C2 ,  C3") == frozenset({"C1", "C2", "C3"})
+
+
+def test_parse_allowed_channels_returns_empty_set_for_empty_string() -> None:
+    # Empty string is "explicitly mute the bot" — different from None (unset).
+    assert parse_allowed_channels("") == frozenset()
+
+
+@pytest.mark.asyncio
+async def test_respond_ignores_mention_in_disallowed_channel() -> None:
+    client = AsyncMock()
+    say = AsyncMock()
+    event = {"channel": "C-OFFLIMITS", "ts": "100.0"}
+
+    await respond_to_mention(
+        AsyncMock(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset({"C-OK"}),
+    )
+
+    say.assert_not_awaited()
+    client.chat_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_respond_responds_normally_when_channel_is_in_the_allowlist() -> None:
+    client = _fake_client([{"user": "UALICE", "text": "hi"}])
+    say = _fake_say()
+    event = {"channel": "C-OK", "ts": "100.0"}
+
+    await respond_to_mention(
+        _fake_agent(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset({"C-OK"}),
+    )
+
+    say.assert_awaited_once()
+    client.chat_update.assert_awaited_once()

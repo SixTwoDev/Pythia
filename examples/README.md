@@ -18,6 +18,28 @@ just export the named env vars before starting Pythia.
 `minimal.json` is the right starting point for a smoke test; once that works
 end-to-end, swap in whichever real connectors you need.
 
+### Pin versions in production
+
+The example configs use bare package names (`uvx mcp-server-time`,
+`npx -y @modelcontextprotocol/server-filesystem`) so they always pull the
+latest version — convenient for trying things out, bad for supply-chain
+hygiene. In production, **pin to specific versions** so a compromised release
+of an MCP server can't get auto-installed on your next pod restart:
+
+```json
+"time": {
+  "command": "uvx",
+  "args": ["mcp-server-time==1.2.3"]
+},
+"fs": {
+  "command": "npx",
+  "args": ["-y", "@modelcontextprotocol/server-filesystem@2024.10.10"]
+}
+```
+
+For maximum paranoia, host the packages in your own registry mirror and
+point `UV_INDEX_URL` / `NPM_CONFIG_REGISTRY` at it.
+
 ## System prompt
 
 [`system-prompt.example.md`](system-prompt.example.md) is a triage-focused

@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 import time
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -7,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from pydantic_ai import Agent
-from pydantic_ai.mcp import MCPServer, load_mcp_servers
+from pydantic_ai.mcp import MCPServer, MCPServerStdio, load_mcp_servers
 from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolCallEvent,
@@ -44,10 +45,45 @@ def _system_prompt(settings: Settings) -> str:
     return DEFAULT_SYSTEM_PROMPT
 
 
+# Env vars passed through to every stdio MCP subprocess. Anything NOT on this
+# list (notably SLACK_*, OPENAI_*, GITHUB_*, AWS_*, …) stays inside Pythia,
+# so a compromised MCP dep can't read or exfiltrate the bot's secrets just
+# by inspecting os.environ. Operators that legitimately need a specific var
+# in their MCP can pass it through explicitly via `"env": {"FOO": "${FOO}"}`
+# in the mcpServers JSON — load_mcp_servers expands that before launch.
+_MCP_INHERITED_ENV_VARS = (
+    "PATH",
+    "HOME",
+    "USER",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TMPDIR",
+    "TEMP",
+    "TMP",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "UV_CACHE_DIR",
+    "NPM_CONFIG_CACHE",
+)
+
+
+def _scoped_mcp_env(config_env: dict[str, str] | None) -> dict[str, str]:
+    inherited = {
+        var: value for var in _MCP_INHERITED_ENV_VARS if (value := os.environ.get(var)) is not None
+    }
+    return {**inherited, **(config_env or {})}
+
+
 def _mcp_servers(settings: Settings) -> list[MCPServer]:
     if not settings.mcp_servers_config:
         return []
-    return list(load_mcp_servers(settings.mcp_servers_config))
+    servers: list[MCPServer] = list(load_mcp_servers(settings.mcp_servers_config))
+    for server in servers:
+        if isinstance(server, MCPServerStdio):
+            server.env = _scoped_mcp_env(server.env)
+    return servers
 
 
 def _truncate(value: object, limit: int = _LOG_VALUE_LIMIT) -> str:

@@ -258,3 +258,52 @@ def test_to_user_content_downscales_oversized_images_before_wrapping() -> None:
     assert isinstance(content, BinaryContent)
     out = Image.open(io.BytesIO(content.data))
     assert max(out.size) <= MAX_IMAGE_DIMENSION
+
+
+# --- Slack file URL host validation -----------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_download_file_refuses_non_slack_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    # If aiohttp is touched, the test fails — we must reject before opening
+    # the connection (otherwise we'd send the bot token to attacker.com).
+    sentinel: Callable[..., Awaitable[Any]] = pytest.fail  # type: ignore[assignment]
+    monkeypatch.setattr(slack_files_module.aiohttp, "ClientSession", sentinel)
+    meta = {
+        "url_private_download": "https://attacker.example.com/exfil",
+        "name": "innocent.png",
+        "mimetype": "image/png",
+        "size": 100,
+    }
+    assert await download_file(meta, "xoxb-secret") is None
+
+
+@pytest.mark.asyncio
+async def test_download_file_accepts_legitimate_slack_hosts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+    _install_fake_aiohttp(monkeypatch, [b"data"], captured)
+    meta = {
+        "url_private_download": "https://files.slack.com/abc/file.png",
+        "name": "ok.png",
+        "mimetype": "image/png",
+        "size": 4,
+    }
+    result = await download_file(meta, "xoxb-secret")
+    assert result is not None
+    assert captured["url"] == "https://files.slack.com/abc/file.png"
+
+
+@pytest.mark.asyncio
+async def test_download_file_accepts_subdomain_of_slack_edge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _install_fake_aiohttp(monkeypatch, [b"data"])
+    meta = {
+        "url_private_download": "https://avatars.slack-edge.com/x.png",
+        "name": "avatar.png",
+        "mimetype": "image/png",
+        "size": 4,
+    }
+    assert await download_file(meta, "xoxb-secret") is not None

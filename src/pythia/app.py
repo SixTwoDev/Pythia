@@ -29,6 +29,17 @@ logger = logging.getLogger(__name__)
 PLACEHOLDER_REPLY = "_Pythia is thinking…_"
 ERROR_REPLY = "Sorry — I hit an error. Check the bot logs."
 
+
+def parse_allowed_channels(spec: str | None) -> frozenset[str] | None:
+    """Parse PYTHIA_ALLOWED_CHANNELS into a set of channel IDs. Returns None
+    when unset (no restriction); returns an empty set if the operator set it
+    to "" or whitespace (effectively muting the bot — useful as a circuit
+    breaker)."""
+    if spec is None:
+        return None
+    return frozenset(c.strip() for c in spec.split(",") if c.strip())
+
+
 ACTION_SHOW_TOOL_TRACE = "show_tool_trace"
 ACTION_HIDE_TOOL_TRACE = "hide_tool_trace"
 TRACE_BLOCK_ID = "pythia_tool_trace"
@@ -193,9 +204,14 @@ async def respond_to_mention(
     bot_user_id: str,
     bot_token: str,
     event: dict[str, Any],
+    allowed_channels: frozenset[str] | None = None,
 ) -> None:
     thread_ts: str = event.get("thread_ts") or event["ts"]
     channel: str = event["channel"]
+
+    if allowed_channels is not None and channel not in allowed_channels:
+        logger.info("ignoring mention in disallowed channel %s", channel)
+        return
 
     try:
         placeholder = await say(text=PLACEHOLDER_REPLY, thread_ts=thread_ts)
@@ -222,11 +238,17 @@ async def respond_to_mention(
 
 
 def register_handlers(
-    app: AsyncApp, agent: Agent[None, str], bot_user_id: str, bot_token: str
+    app: AsyncApp,
+    agent: Agent[None, str],
+    bot_user_id: str,
+    bot_token: str,
+    allowed_channels: frozenset[str] | None = None,
 ) -> None:
     @app.event("app_mention")
     async def handle_mention(event: dict[str, Any], client: AsyncWebClient, say: AsyncSay) -> None:
-        await respond_to_mention(agent, client, say, bot_user_id, bot_token, event)
+        await respond_to_mention(
+            agent, client, say, bot_user_id, bot_token, event, allowed_channels
+        )
 
     @app.action(ACTION_SHOW_TOOL_TRACE)
     async def handle_show(ack: AsyncAck, body: dict[str, Any], client: AsyncWebClient) -> None:
@@ -256,7 +278,13 @@ async def main() -> None:
         app = AsyncApp(token=settings.slack_bot_token)
         auth = await app.client.auth_test()
         bot_user_id = str(auth["user_id"])
-        register_handlers(app, agent, bot_user_id, settings.slack_bot_token)
+        register_handlers(
+            app,
+            agent,
+            bot_user_id,
+            settings.slack_bot_token,
+            parse_allowed_channels(settings.pythia_allowed_channels),
+        )
         handler = AsyncSocketModeHandler(app, settings.slack_app_token)
         logger.info(
             "Starting Pythia in Socket Mode as user %s with %d repo(s)",

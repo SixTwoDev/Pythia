@@ -3,6 +3,7 @@ import logging
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlparse
 
 import aiohttp
 from PIL import Image
@@ -10,10 +11,27 @@ from pydantic_ai.messages import BinaryContent, UserContent
 
 logger = logging.getLogger(__name__)
 
-# Per-file cap. Slack itself accepts much larger uploads, but pulling 100MB
-# blobs into a Slack-bot prompt isn't useful and risks blowing the LLM's
-# context window or the OpenAI HTTP body limits.
-MAX_FILE_BYTES = 10 * 1024 * 1024
+# Per-file cap. Anthropic and OpenAI both recommend ≤5 MiB per image; larger
+# uploads buy no quality and cost real input tokens. Same cap applies to
+# non-image attachments to bound memory and HTTP body size.
+MAX_FILE_BYTES = 5 * 1024 * 1024
+
+# Hostnames that file URLs in Slack `files` events legitimately resolve to.
+# Refusing to send our bot token (`Authorization: Bearer xoxb-…`) anywhere
+# else stops a malicious file metadata from exfiltrating the token to an
+# attacker-controlled server.
+_ALLOWED_SLACK_FILE_HOSTS = (".slack.com", ".slack-files.com", ".slack-edge.com")
+_ALLOWED_SLACK_FILE_HOSTS_EXACT = frozenset({"slack.com", "slack-files.com", "slack-edge.com"})
+
+
+def _is_slack_file_host(url: str) -> bool:
+    host = (urlparse(url).hostname or "").lower()
+    if not host:
+        return False
+    if host in _ALLOWED_SLACK_FILE_HOSTS_EXACT:
+        return True
+    return any(host.endswith(suffix) for suffix in _ALLOWED_SLACK_FILE_HOSTS)
+
 
 # Anthropic recommends ≤1568px on the longest edge for the best quality/cost
 # trade-off; OpenAI vision is similar. Sending a raw 4K screenshot just burns
@@ -81,6 +99,9 @@ def extract_file_metas(messages: Sequence[dict[str, Any]]) -> list[dict[str, Any
 async def download_file(meta: dict[str, Any], bot_token: str) -> FileAttachment | None:
     url = meta.get("url_private_download") or meta.get("url_private")
     if not url:
+        return None
+    if not _is_slack_file_host(url):
+        logger.warning("refusing to send bot token to non-Slack file URL: %s", url)
         return None
     name = str(meta.get("name") or "file")
     mimetype = str(meta.get("mimetype") or "application/octet-stream")

@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 import os
+import random
 import time
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass, field
@@ -174,11 +176,77 @@ def _format_args(args: object) -> str:
         return str(args)
 
 
-async def answer(agent: Agent[None, str], prompt: str | Sequence[UserContent]) -> AgentReply:
-    result = await agent.run(prompt)
+DEFAULT_LLM_TIMEOUT_SECONDS = 60.0
+DEFAULT_LLM_MAX_ATTEMPTS = 4
+_BACKOFF_CAP_SECONDS = 30.0
+
+
+@dataclass(frozen=True)
+class RetryPolicy:
+    """How aggressively to retry a single agent.run call.
+
+    `timeout_seconds` bounds each individual attempt — long enough to cover a
+    multi-tool agent loop, short enough that a hung provider doesn't hold up
+    the Slack thread forever. `max_attempts` is the total tries (initial + N
+    retries), so 4 = 1 initial + 3 retries by default. Backoff is exponential
+    with full jitter, capped at 30s.
+    """
+
+    timeout_seconds: float = DEFAULT_LLM_TIMEOUT_SECONDS
+    max_attempts: int = DEFAULT_LLM_MAX_ATTEMPTS
+
+
+def _backoff_delay(attempt: int) -> float:
+    """Full-jitter exponential backoff: random in [0, base) where
+    base = min(2 ** (attempt - 1), cap). Spreads retries from many bots
+    hammering the same provider after a transient outage."""
+    base = min(2.0 ** (attempt - 1), _BACKOFF_CAP_SECONDS)
+    return random.uniform(0.0, base)
+
+
+def _extract_tool_calls(result: object) -> list[ToolCall]:
     calls: list[ToolCall] = []
-    for message in result.all_messages():
+    messages_fn = getattr(result, "all_messages", None)
+    if messages_fn is None:
+        return calls
+    for message in messages_fn():
         for part in getattr(message, "parts", []):
             if isinstance(part, ToolCallPart):
                 calls.append(ToolCall(name=part.tool_name, args=_format_args(part.args)))
-    return AgentReply(text=str(result.output), tool_calls=calls)
+    return calls
+
+
+async def answer(
+    agent: Agent[None, str],
+    prompt: str | Sequence[UserContent],
+    *,
+    retry: RetryPolicy | None = None,
+) -> AgentReply:
+    policy = retry or RetryPolicy()
+    last_error: BaseException | None = None
+    for attempt in range(1, policy.max_attempts + 1):
+        try:
+            result = await asyncio.wait_for(agent.run(prompt), timeout=policy.timeout_seconds)
+            return AgentReply(text=str(result.output), tool_calls=_extract_tool_calls(result))
+        except Exception as exc:
+            last_error = exc
+            if attempt >= policy.max_attempts:
+                logger.error(
+                    "LLM call gave up after %d attempts (%s: %s)",
+                    attempt,
+                    type(exc).__name__,
+                    exc,
+                )
+                break
+            delay = _backoff_delay(attempt)
+            logger.warning(
+                "LLM call attempt %d/%d failed (%s: %s); retrying in %.1fs",
+                attempt,
+                policy.max_attempts,
+                type(exc).__name__,
+                exc,
+                delay,
+            )
+            await asyncio.sleep(delay)
+    assert last_error is not None
+    raise last_error

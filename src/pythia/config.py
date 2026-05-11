@@ -15,7 +15,14 @@ class Settings(BaseSettings):
     pythia_system_prompt_file: str | None = None
     mcp_servers_config: str | None = None
     codebase_repos: str | None = None
+    codebase_refresh_interval_seconds: int = 3600
     pythia_allowed_channels: str | None = None
+
+    llm_timeout_seconds: float = 60.0
+    llm_max_attempts: int = 4
+
+    pythia_heartbeat_path: str = "/tmp/pythia/heartbeat"
+    pythia_heartbeat_interval_seconds: int = 30
 
 
 def load() -> Settings:

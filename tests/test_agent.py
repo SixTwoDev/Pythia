@@ -144,3 +144,39 @@ def test_log_event_handles_orphan_result_without_recorded_start(
         _log_event(result)
     assert "tool result ← rogue" in caplog.text
     assert "(?)" in caplog.text
+
+
+# --- MCP env scoping --------------------------------------------------------
+
+
+def test_scoped_mcp_env_inherits_only_allowlisted_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    from pythia.agent import _MCP_INHERITED_ENV_VARS, _scoped_mcp_env
+
+    monkeypatch.setenv("PATH", "/custom/path")
+    monkeypatch.setenv("HOME", "/home/pythia")
+    monkeypatch.setenv("SLACK_BOT_TOKEN", "xoxb-VERY-SECRET")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-also-secret")
+    monkeypatch.setenv("AWS_ACCESS_KEY_ID", "AKIA-NOPE")
+
+    env = _scoped_mcp_env(None)
+
+    assert env["PATH"] == "/custom/path"
+    assert env["HOME"] == "/home/pythia"
+    assert "SLACK_BOT_TOKEN" not in env, "Pythia secrets must not leak into MCP subprocesses"
+    assert "OPENAI_API_KEY" not in env
+    assert "AWS_ACCESS_KEY_ID" not in env
+    # Belt-and-braces: nothing outside the allowlist made it in.
+    assert set(env).issubset(set(_MCP_INHERITED_ENV_VARS))
+
+
+def test_scoped_mcp_env_layers_explicit_config_on_top_of_inherited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from pythia.agent import _scoped_mcp_env
+
+    monkeypatch.setenv("PATH", "/custom/path")
+    env = _scoped_mcp_env({"DD_API_KEY": "expanded-by-load-mcp", "PATH": "/override"})
+
+    assert env["DD_API_KEY"] == "expanded-by-load-mcp"
+    # Config-supplied env wins over inherited (operator's explicit choice).
+    assert env["PATH"] == "/override"

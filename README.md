@@ -131,6 +131,7 @@ All configuration is via environment variables.
 | `PYTHIA_SYSTEM_PROMPT_FILE` | no | &mdash; | Path to a file whose contents replace the built-in system prompt. |
 | `MCP_SERVERS_CONFIG` | no | &mdash; | Path to a JSON file declaring MCP servers (see below). Without it, Pythia runs with no tools and just answers from the conversation. |
 | `CODEBASE_REPOS` | no | &mdash; | Comma-separated list of git repos to clone on startup &mdash; either `NAME=URL` or just `URL`. Pythia exposes `search_code` and `read_file` tools over them. Needs `git` and `ripgrep` on PATH (the published Docker image bundles both). |
+| `PYTHIA_ALLOWED_CHANNELS` | no | &mdash; | Comma-separated Slack channel IDs Pythia will reply in. Mentions elsewhere are silently ignored. Leave unset for "any channel". Set to `""` to mute the bot. |
 
 ## MCP servers
 

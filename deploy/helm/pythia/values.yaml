@@ -42,7 +42,21 @@ codebase:
   repos: ""
   sshExistingSecret: ""
 
-resources: {}
+# Sensible defaults — bot is mostly I/O-bound waiting on Slack and the LLM,
+# so requests are tiny; the memory limit is the real safety rail (catches a
+# runaway MCP, an oversized clone, etc.). Set a CPU limit only if you need
+# tight budgeting; leaving it unset is the modern best practice.
+resources:
+  requests:
+    cpu: 100m
+    memory: 256Mi
+  limits:
+    memory: 1Gi
+
+# Pythia has no business calling the K8s API, so don't hand it a token.
+# Override only if you bolt on a sidecar that genuinely needs one.
+automountServiceAccountToken: false
+
 nodeSelector: {}
 tolerations: []
 affinity: {}

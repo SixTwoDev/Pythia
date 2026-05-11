@@ -131,6 +131,7 @@ All configuration is via environment variables.
 | `PYTHIA_SYSTEM_PROMPT_FILE` | no | &mdash; | Path to a file whose contents replace the built-in system prompt. |
 | `MCP_SERVERS_CONFIG` | no | &mdash; | Path to a JSON file declaring MCP servers (see below). Without it, Pythia runs with no tools and just answers from the conversation. |
 | `CODEBASE_REPOS` | no | &mdash; | Comma-separated list of git repos to clone on startup &mdash; either `NAME=URL` or just `URL`. Pythia exposes `search_code` and `read_file` tools over them. Needs `git` and `ripgrep` on PATH (the published Docker image bundles both). |
+| `CODEBASE_REFRESH_INTERVAL_SECONDS` | no | `3600` | How often to fetch + hard-reset each cloned repo against its remote. Set to `0` to disable; the clones then stay frozen until the pod restarts. |
 | `PYTHIA_ALLOWED_CHANNELS` | no | &mdash; | Comma-separated Slack channel IDs Pythia will reply in. Mentions elsewhere are silently ignored. Leave unset for "any channel". Set to `""` to mute the bot. |
 
 ## MCP servers
@@ -211,7 +212,9 @@ CODEBASE_REPOS=git@github.com:acme/api.git
 CODEBASE_REPOS=api=git@github.com:acme/api.git,web=https://github.com/acme/web.git
 ```
 
-The clones live in a tempdir for the lifetime of the process and are deleted on shutdown. To refresh, restart the bot.
+The clones live in a tempdir for the lifetime of the process and are deleted on shutdown.
+
+By default Pythia re-fetches every repo against its remote default branch every hour and hard-resets the local clone to match (`git fetch --depth 1 origin && git reset --hard FETCH_HEAD`). Tune the cadence with `CODEBASE_REFRESH_INTERVAL_SECONDS` or set it to `0` to freeze the clones at boot. Hard-reset is intentional &mdash; Pythia never makes local commits, so "match remote exactly" is both the desired and the only reliably convergent behaviour (a `pull` would fail on remote force-pushes or branch renames). Grounding docs (`CLAUDE.md` / `AGENTS.md`) are still only loaded once at startup; restart the bot to pick up changes to those.
 
 ### Auth for private repos
 

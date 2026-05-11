@@ -14,7 +14,9 @@ from pythia.codebase import (
     clone_repo,
     parse_repos,
     read_grounding_docs,
+    refresh_repo,
     require_binaries,
+    run_refresh_loop,
 )
 
 needs_rg = pytest.mark.skipif(shutil.which("rg") is None, reason="ripgrep not installed")
@@ -282,3 +284,100 @@ def test_read_grounding_docs_ignores_in_tree_symlinks_too(tmp_path: Path) -> Non
     out = read_grounding_docs(repos)
 
     assert out == ""
+
+
+# --- refresh ----------------------------------------------------------------
+
+
+import asyncio  # noqa: E402  (kept low to mirror the rest of the file's grouping)
+
+
+def _capture_git_invocations(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, ...]]:
+    invocations: list[tuple[str, ...]] = []
+
+    class _OkProc:
+        returncode = 0
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"", b"")
+
+    async def _fake_exec(*args: object, **_: object) -> _OkProc:
+        invocations.append(tuple(str(a) for a in args))
+        return _OkProc()
+
+    monkeypatch.setattr(codebase_module.asyncio, "create_subprocess_exec", _fake_exec)
+    return invocations
+
+
+@pytest.mark.asyncio
+async def test_refresh_repo_runs_fetch_then_hard_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    invocations = _capture_git_invocations(monkeypatch)
+    repo = Repo(name="api", url="git@example.com:x.git", local_path=tmp_path)
+
+    assert await refresh_repo(repo) is True
+    assert len(invocations) == 2
+    assert invocations[0][:5] == ("git", "-C", str(tmp_path), "fetch", "--depth")
+    assert invocations[1][:5] == ("git", "-C", str(tmp_path), "reset", "--hard")
+    assert invocations[1][-1] == "FETCH_HEAD"
+
+
+@pytest.mark.asyncio
+async def test_refresh_repo_returns_false_when_git_exits_nonzero(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    class _FailProc:
+        returncode = 1
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            return (b"", b"force-pushed remote rejected")
+
+    async def _fake_exec(*_args: object, **_kwargs: object) -> _FailProc:
+        return _FailProc()
+
+    monkeypatch.setattr(codebase_module.asyncio, "create_subprocess_exec", _fake_exec)
+    repo = Repo(name="api", url="git@example.com:x.git", local_path=tmp_path)
+
+    assert await refresh_repo(repo) is False
+
+
+@pytest.mark.asyncio
+async def test_run_refresh_loop_returns_immediately_when_disabled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    invocations = _capture_git_invocations(monkeypatch)
+    repos = {"api": Repo(name="api", url="x", local_path=tmp_path)}
+    locks = {"api": asyncio.Lock()}
+    # interval <= 0 → loop returns without ever sleeping or fetching.
+    await asyncio.wait_for(run_refresh_loop(repos, locks, 0), timeout=1.0)
+    assert invocations == []
+
+
+@pytest.mark.asyncio
+async def test_run_refresh_loop_calls_fetch_and_reset_each_interval(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    invocations = _capture_git_invocations(monkeypatch)
+    iterations = 0
+
+    async def _fast_sleep(_: float) -> None:
+        nonlocal iterations
+        iterations += 1
+        if iterations > 1:
+            raise asyncio.CancelledError
+
+    monkeypatch.setattr(codebase_module.asyncio, "sleep", _fast_sleep)
+    repos = {
+        "api": Repo(name="api", url="x", local_path=tmp_path / "api"),
+        "web": Repo(name="web", url="y", local_path=tmp_path / "web"),
+    }
+    locks = {name: asyncio.Lock() for name in repos}
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_refresh_loop(repos, locks, 1)
+
+    # One iteration ran fetch + reset for each of the two repos.
+    assert len(invocations) == 4
+    verbs = {invocation[3] for invocation in invocations}
+    assert verbs == {"fetch", "reset"}

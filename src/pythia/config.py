@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     pythia_system_prompt_file: str | None = None
     mcp_servers_config: str | None = None
     codebase_repos: str | None = None
+    codebase_refresh_interval_seconds: int = 3600
     pythia_allowed_channels: str | None = None
 
 

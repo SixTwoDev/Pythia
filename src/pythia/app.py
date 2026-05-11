@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import logging
 import tempfile
 from pathlib import Path
@@ -18,6 +20,7 @@ from pythia.codebase import (
     parse_repos,
     read_grounding_docs,
     require_binaries,
+    run_refresh_loop,
 )
 from pythia.config import load
 from pythia.slack_files import download_file, extract_file_metas, to_user_content
@@ -270,9 +273,10 @@ async def main() -> None:
 
     with tempfile.TemporaryDirectory(prefix="pythia-repos-") as tmp:
         repos = await clone_all(repo_specs, Path(tmp))
+        repo_locks = {name: asyncio.Lock() for name in repos}
         agent = build_agent(
             settings,
-            extra_tools=build_codebase_tools(repos),
+            extra_tools=build_codebase_tools(repos, repo_locks),
             grounding_docs=read_grounding_docs(repos),
         )
         app = AsyncApp(token=settings.slack_bot_token)
@@ -291,5 +295,13 @@ async def main() -> None:
             bot_user_id,
             len(repos),
         )
-        async with agent.run_mcp_servers():
-            await handler.start_async()
+        refresh_task = asyncio.create_task(
+            run_refresh_loop(repos, repo_locks, settings.codebase_refresh_interval_seconds)
+        )
+        try:
+            async with agent.run_mcp_servers():
+                await handler.start_async()
+        finally:
+            refresh_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await refresh_task

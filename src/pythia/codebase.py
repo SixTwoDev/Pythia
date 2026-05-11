@@ -9,6 +9,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 CLONE_TIMEOUT_SECONDS = 300
+REFRESH_TIMEOUT_SECONDS = 120
+DEFAULT_REFRESH_INTERVAL_SECONDS = 3600
 SEARCH_MAX_RESULTS = 50
 SEARCH_MAX_PER_FILE = 10
 READ_DEFAULT_LINES = 400
@@ -97,6 +99,72 @@ async def clone_all(specs: list[RepoSpec], base_dir: Path) -> dict[str, Repo]:
     return {r.name: r for r in results}
 
 
+async def refresh_repo(repo: Repo) -> bool:
+    """Force the local clone back into lockstep with its remote default branch.
+
+    Pythia never makes local commits, so a hard reset to FETCH_HEAD is both
+    safe and the only behaviour that's guaranteed to converge — `pull` would
+    fail on a remote force-push, on a default-branch rename, or on any
+    history rewrite. Returns True on success, False on any git failure.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
+    git = ("git", "-C", str(repo.local_path))
+    for argv in (
+        (*git, "fetch", "--depth", "1", "origin"),
+        (*git, "reset", "--hard", "FETCH_HEAD"),
+    ):
+        proc = await asyncio.create_subprocess_exec(
+            *argv,
+            env=env,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        try:
+            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=REFRESH_TIMEOUT_SECONDS)
+        except TimeoutError:
+            proc.kill()
+            logger.warning("refresh of %s timed out on %s", repo.name, argv[3])
+            return False
+        if proc.returncode != 0:
+            logger.warning(
+                "refresh of %s failed on `git %s`: %s",
+                repo.name,
+                argv[3],
+                stderr.decode(errors="replace").strip(),
+            )
+            return False
+    logger.info("refreshed %s", repo.name)
+    return True
+
+
+async def run_refresh_loop(
+    repos: dict[str, Repo],
+    locks: dict[str, asyncio.Lock],
+    interval_seconds: int,
+) -> None:
+    """Background task: every `interval_seconds`, fetch + reset every repo
+    against its remote. Holds the per-repo lock during refresh so `read_file`
+    and `search_code` never see mid-update state.
+
+    Disabled when interval_seconds <= 0; the loop simply returns.
+    """
+    if interval_seconds <= 0 or not repos:
+        return
+    logger.info(
+        "starting codebase refresh loop: %d repo(s) every %ds",
+        len(repos),
+        interval_seconds,
+    )
+    while True:
+        await asyncio.sleep(interval_seconds)
+        for name, repo in repos.items():
+            async with locks[name]:
+                try:
+                    await refresh_repo(repo)
+                except Exception:
+                    logger.exception("unexpected error refreshing %s", name)
+
+
 def read_grounding_docs(repos: dict[str, Repo]) -> str:
     """Read the first matching CLAUDE.md / AGENTS.md from each repo and join
     them into a single grounding section the agent can read at startup.
@@ -141,9 +209,13 @@ def _read_grounding_doc(name: str, repo: Repo, filename: str) -> str | None:
     return content
 
 
-def build_codebase_tools(repos: dict[str, Repo]) -> list[Callable[..., object]]:
+def build_codebase_tools(
+    repos: dict[str, Repo],
+    locks: dict[str, asyncio.Lock] | None = None,
+) -> list[Callable[..., object]]:
     if not repos:
         return []
+    repo_locks = locks if locks is not None else {name: asyncio.Lock() for name in repos}
 
     async def search_code(repo: str, query: str) -> str:
         """Search a repo for a regex pattern using ripgrep.
@@ -159,19 +231,20 @@ def build_codebase_tools(repos: dict[str, Repo]) -> list[Callable[..., object]]:
         if repo not in repos:
             return f"unknown repo {repo!r}; configured: {sorted(repos)}"
         root = repos[repo].local_path
-        proc = await asyncio.create_subprocess_exec(
-            "rg",
-            "--no-heading",
-            "--line-number",
-            "--max-count",
-            str(SEARCH_MAX_PER_FILE),
-            "--",
-            query,
-            str(root),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
+        async with repo_locks[repo]:
+            proc = await asyncio.create_subprocess_exec(
+                "rg",
+                "--no-heading",
+                "--line-number",
+                "--max-count",
+                str(SEARCH_MAX_PER_FILE),
+                "--",
+                query,
+                str(root),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await proc.communicate()
         if proc.returncode == 1:
             return f"no matches for {query!r} in {repo}"
         if proc.returncode != 0:
@@ -201,9 +274,10 @@ def build_codebase_tools(repos: dict[str, Repo]) -> list[Callable[..., object]]:
         target = (root / path).resolve()
         if not target.is_relative_to(root):
             return f"path {path!r} escapes the repo root"
-        if not target.is_file():
-            return f"not a file: {path}"
-        text = target.read_text(encoding="utf-8", errors="replace")
+        async with repo_locks[repo]:
+            if not target.is_file():
+                return f"not a file: {path}"
+            text = target.read_text(encoding="utf-8", errors="replace")
         lines = text.splitlines()
         start = max(1, start_line)
         end = min(len(lines), end_line)

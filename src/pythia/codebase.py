@@ -10,6 +10,7 @@ logger = logging.getLogger(__name__)
 
 CLONE_TIMEOUT_SECONDS = 300
 REFRESH_TIMEOUT_SECONDS = 120
+KILL_REAP_TIMEOUT_SECONDS = 5
 DEFAULT_REFRESH_INTERVAL_SECONDS = 3600
 SEARCH_MAX_RESULTS = 50
 SEARCH_MAX_PER_FILE = 10
@@ -65,6 +66,17 @@ def require_binaries(*names: str) -> None:
         )
 
 
+async def _kill_and_reap(proc: asyncio.subprocess.Process, name: str) -> None:
+    """SIGKILL a runaway subprocess and wait for it to exit, so it doesn't
+    linger as a zombie and the stdout/stderr pipes get closed. Bounded by
+    KILL_REAP_TIMEOUT_SECONDS in case the kernel itself is wedged."""
+    proc.kill()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=KILL_REAP_TIMEOUT_SECONDS)
+    except TimeoutError:
+        logger.warning("subprocess %s did not exit after SIGKILL", name)
+
+
 async def clone_repo(spec: RepoSpec, base_dir: Path) -> Repo:
     target = base_dir / spec.name
     proc = await asyncio.create_subprocess_exec(
@@ -82,7 +94,7 @@ async def clone_repo(spec: RepoSpec, base_dir: Path) -> Repo:
     try:
         _, stderr = await asyncio.wait_for(proc.communicate(), timeout=CLONE_TIMEOUT_SECONDS)
     except TimeoutError:
-        proc.kill()
+        await _kill_and_reap(proc, f"git clone {spec.name}")
         raise RuntimeError(f"git clone timed out for {spec.name}") from None
     if proc.returncode != 0:
         raise RuntimeError(
@@ -122,7 +134,7 @@ async def refresh_repo(repo: Repo) -> bool:
         try:
             _, stderr = await asyncio.wait_for(proc.communicate(), timeout=REFRESH_TIMEOUT_SECONDS)
         except TimeoutError:
-            proc.kill()
+            await _kill_and_reap(proc, f"git {argv[3]} {repo.name}")
             logger.warning("refresh of %s timed out on %s", repo.name, argv[3])
             return False
         if proc.returncode != 0:

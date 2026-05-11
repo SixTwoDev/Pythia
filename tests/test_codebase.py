@@ -381,3 +381,82 @@ async def test_run_refresh_loop_calls_fetch_and_reset_each_interval(
     assert len(invocations) == 4
     verbs = {invocation[3] for invocation in invocations}
     assert verbs == {"fetch", "reset"}
+
+
+# --- subprocess reap on timeout ---------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_repo_reaps_subprocess_after_kill_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Verify the kill+wait sequence: refresh that times out must call
+    # proc.kill() AND proc.wait() so the child doesn't linger as a zombie
+    # and the stdout/stderr pipes get closed.
+    kill_called = False
+    wait_called = False
+
+    class _HangingProc:
+        returncode: int | None = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(3600)  # never returns; wait_for cancels us
+            return (b"", b"")
+
+        def kill(self) -> None:
+            nonlocal kill_called
+            kill_called = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            nonlocal wait_called
+            wait_called = True
+            return -9
+
+    async def _fake_exec(*_args: object, **_kwargs: object) -> _HangingProc:
+        return _HangingProc()
+
+    monkeypatch.setattr(codebase_module.asyncio, "create_subprocess_exec", _fake_exec)
+    # Compress the timeout so the test runs in milliseconds, not minutes.
+    monkeypatch.setattr(codebase_module, "REFRESH_TIMEOUT_SECONDS", 0.05)
+
+    repo = Repo(name="api", url="x", local_path=tmp_path)
+    assert await refresh_repo(repo) is False
+    assert kill_called, "timed-out subprocess must be killed"
+    assert wait_called, "killed subprocess must be reaped via proc.wait()"
+
+
+@pytest.mark.asyncio
+async def test_clone_repo_reaps_subprocess_after_kill_on_timeout(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    kill_called = False
+    wait_called = False
+
+    class _HangingProc:
+        returncode: int | None = None
+
+        async def communicate(self) -> tuple[bytes, bytes]:
+            await asyncio.sleep(3600)
+            return (b"", b"")
+
+        def kill(self) -> None:
+            nonlocal kill_called
+            kill_called = True
+            self.returncode = -9
+
+        async def wait(self) -> int:
+            nonlocal wait_called
+            wait_called = True
+            return -9
+
+    async def _fake_exec(*_args: object, **_kwargs: object) -> _HangingProc:
+        return _HangingProc()
+
+    monkeypatch.setattr(codebase_module.asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(codebase_module, "CLONE_TIMEOUT_SECONDS", 0.05)
+
+    with pytest.raises(RuntimeError, match="git clone timed out"):
+        await clone_repo(RepoSpec(name="api", url="x"), tmp_path)
+    assert kill_called
+    assert wait_called

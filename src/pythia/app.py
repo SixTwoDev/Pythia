@@ -242,6 +242,21 @@ async def respond_to_mention(
         await client.chat_update(channel=channel, ts=placeholder_ts, text=ERROR_REPLY)
 
 
+def _is_handleable_im(event: dict[str, Any], bot_user_id: str) -> bool:
+    """A DM event we should treat as a question for Pythia.
+
+    Filters out: messages in non-IM channels (we only handle the IM transport
+    here — channel mentions go via app_mention), edits/deletions/joins
+    (anything with a `subtype`), our own bot's messages (avoid self-reply
+    loops), and messages from any other bot user.
+    """
+    if event.get("channel_type") != "im":
+        return False
+    if event.get("subtype"):
+        return False
+    return not (event.get("bot_id") or event.get("user") == bot_user_id)
+
+
 def register_handlers(
     app: AsyncApp,
     agent: Agent[None, str],
@@ -252,6 +267,16 @@ def register_handlers(
 ) -> None:
     @app.event("app_mention")
     async def handle_mention(event: dict[str, Any], client: AsyncWebClient, say: AsyncSay) -> None:
+        await respond_to_mention(
+            agent, client, say, bot_user_id, bot_token, event, allowed_channels, retry
+        )
+
+    @app.event("message")
+    async def handle_message(event: dict[str, Any], client: AsyncWebClient, say: AsyncSay) -> None:
+        # The Slack manifest subscribes to message.im so users can DM the bot.
+        # Bolt routes all `message.*` events here; filter to the ones we want.
+        if not _is_handleable_im(event, bot_user_id):
+            return
         await respond_to_mention(
             agent, client, say, bot_user_id, bot_token, event, allowed_channels, retry
         )

@@ -11,6 +11,7 @@ from pythia.app import (
     PLACEHOLDER_REPLY,
     TRACE_ACTIONS_BLOCK_ID,
     TRACE_BLOCK_ID,
+    _is_handleable_im,
     collapse_tool_trace,
     expand_tool_trace,
     parse_allowed_channels,
@@ -316,3 +317,36 @@ async def test_respond_responds_normally_when_channel_is_in_the_allowlist() -> N
 
     say.assert_awaited_once()
     client.chat_update.assert_awaited_once()
+
+
+# --- DM (message.im) handling ----------------------------------------------
+
+
+def test_is_handleable_im_accepts_a_user_message_in_an_im_channel() -> None:
+    event = {"channel_type": "im", "user": "UALICE", "text": "hi"}
+    assert _is_handleable_im(event, BOT_USER_ID) is True
+
+
+def test_is_handleable_im_rejects_messages_in_non_im_channels() -> None:
+    event = {"channel_type": "channel", "user": "UALICE", "text": "hi"}
+    assert _is_handleable_im(event, BOT_USER_ID) is False
+
+
+def test_is_handleable_im_rejects_message_subtypes_like_edits_and_joins() -> None:
+    event = {
+        "channel_type": "im",
+        "user": "UALICE",
+        "subtype": "message_changed",
+        "text": "edited",
+    }
+    assert _is_handleable_im(event, BOT_USER_ID) is False
+
+
+def test_is_handleable_im_rejects_messages_from_the_bot_itself() -> None:
+    event = {"channel_type": "im", "user": BOT_USER_ID, "text": "hi"}
+    assert _is_handleable_im(event, BOT_USER_ID) is False
+
+
+def test_is_handleable_im_rejects_messages_from_other_bots() -> None:
+    event = {"channel_type": "im", "bot_id": "BSOMETHING", "text": "ping"}
+    assert _is_handleable_im(event, BOT_USER_ID) is False

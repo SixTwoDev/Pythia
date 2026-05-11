@@ -13,7 +13,7 @@ from slack_bolt.context.ack.async_ack import AsyncAck
 from slack_bolt.context.say.async_say import AsyncSay
 from slack_sdk.web.async_client import AsyncWebClient
 
-from pythia.agent import ToolCall, answer, build_agent
+from pythia.agent import RetryPolicy, ToolCall, answer, build_agent
 from pythia.codebase import (
     build_codebase_tools,
     clone_all,
@@ -208,6 +208,7 @@ async def respond_to_mention(
     bot_token: str,
     event: dict[str, Any],
     allowed_channels: frozenset[str] | None = None,
+    retry: RetryPolicy | None = None,
 ) -> None:
     thread_ts: str = event.get("thread_ts") or event["ts"]
     channel: str = event["channel"]
@@ -227,7 +228,7 @@ async def respond_to_mention(
     try:
         messages = await fetch_thread(client, channel, thread_ts)
         prompt = await _build_user_prompt(messages, bot_user_id, bot_token)
-        reply = await answer(agent, prompt)
+        reply = await answer(agent, prompt, retry=retry)
         text = to_slack_mrkdwn(reply.text)
         await client.chat_update(
             channel=channel,
@@ -246,11 +247,12 @@ def register_handlers(
     bot_user_id: str,
     bot_token: str,
     allowed_channels: frozenset[str] | None = None,
+    retry: RetryPolicy | None = None,
 ) -> None:
     @app.event("app_mention")
     async def handle_mention(event: dict[str, Any], client: AsyncWebClient, say: AsyncSay) -> None:
         await respond_to_mention(
-            agent, client, say, bot_user_id, bot_token, event, allowed_channels
+            agent, client, say, bot_user_id, bot_token, event, allowed_channels, retry
         )
 
     @app.action(ACTION_SHOW_TOOL_TRACE)
@@ -288,6 +290,10 @@ async def main() -> None:
             bot_user_id,
             settings.slack_bot_token,
             parse_allowed_channels(settings.pythia_allowed_channels),
+            RetryPolicy(
+                timeout_seconds=settings.llm_timeout_seconds,
+                max_attempts=settings.llm_max_attempts,
+            ),
         )
         handler = AsyncSocketModeHandler(app, settings.slack_app_token)
         logger.info(

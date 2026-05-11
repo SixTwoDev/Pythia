@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     codebase_refresh_interval_seconds: int = 3600
     pythia_allowed_channels: str | None = None
 
+    llm_timeout_seconds: float = 60.0
+    llm_max_attempts: int = 4
+
 
 def load() -> Settings:
     return Settings()  # pyright: ignore[reportCallIssue]

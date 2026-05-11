@@ -133,6 +133,8 @@ All configuration is via environment variables.
 | `CODEBASE_REPOS` | no | &mdash; | Comma-separated list of git repos to clone on startup &mdash; either `NAME=URL` or just `URL`. Pythia exposes `search_code` and `read_file` tools over them. Needs `git` and `ripgrep` on PATH (the published Docker image bundles both). |
 | `CODEBASE_REFRESH_INTERVAL_SECONDS` | no | `3600` | How often to fetch + hard-reset each cloned repo against its remote. Set to `0` to disable; the clones then stay frozen until the pod restarts. |
 | `PYTHIA_ALLOWED_CHANNELS` | no | &mdash; | Comma-separated Slack channel IDs Pythia will reply in. Mentions elsewhere are silently ignored. Leave unset for "any channel". Set to `""` to mute the bot. |
+| `LLM_TIMEOUT_SECONDS` | no | `60` | Per-attempt cap on `agent.run`. Hung providers don't hold the Slack thread open forever. |
+| `LLM_MAX_ATTEMPTS` | no | `4` | Total tries (initial + retries) for the LLM call. Backoff is exponential with jitter, capped at 30s. After all attempts fail the placeholder reply is updated with a friendly error. |
 
 ## MCP servers
 

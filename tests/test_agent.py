@@ -114,10 +114,12 @@ def test_log_event_logs_tool_call_with_name_and_args(
             tool_call_id="call-1",
         )
     )
+    started_at: dict[str, float] = {}
     with caplog.at_level("INFO", logger="pythia.agent"):
-        _log_event(event)
+        _log_event(event, started_at)
     assert "tool call → search_code" in caplog.text
     assert "load_mcp" in caplog.text
+    assert "call-1" in started_at, "the tool call's start time should be recorded for later"
 
 
 def test_log_event_logs_tool_result_with_outcome_and_elapsed(
@@ -129,12 +131,14 @@ def test_log_event_logs_tool_result_with_outcome_and_elapsed(
     result = FunctionToolResultEvent(
         part=ToolReturnPart(tool_name="read_file", content="file contents", tool_call_id="call-2")
     )
+    started_at: dict[str, float] = {}
     with caplog.at_level("INFO", logger="pythia.agent"):
-        _log_event(call)
-        _log_event(result)
+        _log_event(call, started_at)
+        _log_event(result, started_at)
     assert "tool result ← read_file [success]" in caplog.text
     assert "file contents" in caplog.text
     assert "ms)" in caplog.text
+    assert started_at == {}, "the matched call→result pair must drop out of started_at"
 
 
 def test_log_event_handles_orphan_result_without_recorded_start(
@@ -144,9 +148,36 @@ def test_log_event_handles_orphan_result_without_recorded_start(
         part=ToolReturnPart(tool_name="rogue", content="anything", tool_call_id="never-seen-before")
     )
     with caplog.at_level("INFO", logger="pythia.agent"):
-        _log_event(result)
+        _log_event(result, {})
     assert "tool result ← rogue" in caplog.text
     assert "(?)" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_log_events_scopes_started_at_per_run_so_orphans_dont_leak() -> None:
+    # Simulate a tool call whose result event never arrives (the LLM call
+    # crashed mid-stream). The started_at dict lives inside _log_events,
+    # so when the iterator finishes the entry is GC'd — no module-level
+    # leak across runs.
+    from collections.abc import AsyncIterator
+
+    from pythia.agent import _log_events
+
+    call = FunctionToolCallEvent(part=ToolCallPart(tool_name="x", args={}, tool_call_id="orphan-1"))
+
+    async def _events() -> AsyncIterator[Any]:
+        yield call
+        # No matching FunctionToolResultEvent — the iterator just ends.
+
+    await _log_events(None, _events())
+    # The dict is local to _log_events; nothing exported. The point of this
+    # test is that the call above completes without raising and without
+    # mutating any module-level state.
+    import pythia.agent as agent_module
+
+    assert not hasattr(agent_module, "_tool_call_started_at"), (
+        "started_at must not exist as module-level state"
+    )
 
 
 # --- MCP env scoping --------------------------------------------------------

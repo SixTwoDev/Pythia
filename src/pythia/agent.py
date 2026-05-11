@@ -27,7 +27,6 @@ from pythia.config import Settings
 logger = logging.getLogger(__name__)
 
 _LOG_VALUE_LIMIT = 200
-_tool_call_started_at: dict[str, float] = {}
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are Pythia, an assistant in a Slack workspace. You help engineers investigate questions \
@@ -95,13 +94,13 @@ def _truncate(value: object, limit: int = _LOG_VALUE_LIMIT) -> str:
     return text[: limit - 1] + "…"
 
 
-def _log_event(event: AgentStreamEvent | HandleResponseEvent) -> None:
+def _log_event(event: AgentStreamEvent | HandleResponseEvent, started_at: dict[str, float]) -> None:
     if isinstance(event, FunctionToolCallEvent):
-        _tool_call_started_at[event.part.tool_call_id] = time.monotonic()
+        started_at[event.part.tool_call_id] = time.monotonic()
         logger.info("tool call → %s(%s)", event.part.tool_name, _truncate(event.part.args))
     elif isinstance(event, FunctionToolResultEvent):
         part = event.part
-        started = _tool_call_started_at.pop(part.tool_call_id, None)
+        started = started_at.pop(part.tool_call_id, None)
         elapsed = f"{(time.monotonic() - started) * 1000:.0f}ms" if started else "?"
         outcome = getattr(part, "outcome", "retry")
         logger.info(
@@ -117,8 +116,13 @@ async def _log_events(
     _ctx: Any,
     events: AsyncIterable[AgentStreamEvent | HandleResponseEvent],
 ) -> None:
+    # Per-run scope: when the run finishes (success, error, cancellation), the
+    # dict drops out of scope and any unmatched call→result entries get GC'd.
+    # A module-level dict would leak entries forever for tool calls that
+    # crashed before producing a result event.
+    started_at: dict[str, float] = {}
     async for event in events:
-        _log_event(event)
+        _log_event(event, started_at)
 
 
 _GROUNDING_PREFIX = (

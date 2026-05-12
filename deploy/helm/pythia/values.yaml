@@ -1,6 +1,6 @@
 image:
   repository: ghcr.io/sixtwodev/pythia
-  tag: ""  # defaults to .Chart.AppVersion
+  tag: latest
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

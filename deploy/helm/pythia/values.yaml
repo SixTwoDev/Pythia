@@ -1,7 +1,10 @@
 image:
   repository: ghcr.io/sixtwodev/pythia
-  tag: ""  # defaults to .Chart.AppVersion
-  pullPolicy: IfNotPresent
+  tag: ""  # defaults to .Chart.AppVersion ("latest")
+  # Always re-pull because the default tag is "latest" — IfNotPresent would
+  # silently freeze nodes on whatever image they cached first. Set to
+  # IfNotPresent once you pin image.tag to an immutable version.
+  pullPolicy: Always
 
 imagePullSecrets: []
 

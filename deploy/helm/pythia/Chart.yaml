@@ -3,7 +3,10 @@ name: pythia
 description: Open-source Slack bot that connects an LLM to arbitrary MCP servers
 type: application
 version: 0.0.1
-appVersion: "0.0.1"
+# Default container image tag used when image.tag is empty. "latest" tracks
+# whatever was last pushed to GHCR — fine for pre-1.0; pin in values.yaml
+# once stable image tags exist.
+appVersion: "latest"
 home: https://github.com/SixTwoDev/Pythia
 sources:
   - https://github.com/SixTwoDev/Pythia

@@ -39,6 +39,38 @@ def test_format_thread_falls_back_to_bot_id_then_unknown_when_user_field_absent(
     )
 
 
+def test_format_thread_strips_bots_own_user_id_mention_from_message_text() -> None:
+    # When a user @-mentions Pythia in a thread reply, the raw text contains
+    # the literal `<@UBOT123>` token. The model has no way to know that ID
+    # refers to itself, so leaving it in makes the question read like it's
+    # addressed to some unknown third party — and the parent message stops
+    # feeling like the context for *that* question. Strip it.
+    messages = [
+        {"user": "UALICE", "text": "the deploy failed"},
+        {"user": "UALICE", "text": f"<@{BOT_USER_ID}> why?"},
+    ]
+    formatted = format_thread(messages, BOT_USER_ID)
+    assert f"<@{BOT_USER_ID}>" not in formatted
+    assert formatted == "<@UALICE>: the deploy failed\n<@UALICE>: why?"
+
+
+def test_format_thread_strips_self_mention_even_when_not_at_start() -> None:
+    messages = [{"user": "UALICE", "text": f"hey <@{BOT_USER_ID}> can you explain?"}]
+    assert format_thread(messages, BOT_USER_ID) == "<@UALICE>: hey can you explain?"
+
+
+def test_format_thread_skips_message_that_is_only_a_bare_self_mention() -> None:
+    # A message containing nothing but `<@UBOT>` has no content to feed the
+    # model once the mention is stripped, so it should be dropped like any
+    # other empty-text message.
+    messages = [
+        {"user": "UALICE", "text": "first"},
+        {"user": "UBOB", "text": f"<@{BOT_USER_ID}>"},
+        {"user": "UCAROL", "text": "second"},
+    ]
+    assert format_thread(messages, BOT_USER_ID) == "<@UALICE>: first\n<@UCAROL>: second"
+
+
 def test_format_thread_preserves_message_order() -> None:
     messages = [
         {"user": "UALICE", "text": "1"},

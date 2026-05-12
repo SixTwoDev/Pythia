@@ -228,6 +228,13 @@ async def respond_to_mention(
 
     try:
         messages = await fetch_thread(client, channel, thread_ts)
+        logger.info(
+            "fetched %d thread message(s) for channel=%s thread_ts=%s event_ts=%s",
+            len(messages),
+            channel,
+            thread_ts,
+            event.get("ts"),
+        )
         prompt = await _build_user_prompt(messages, bot_user_id, bot_token)
         reply = await answer(agent, prompt, retry=retry)
         text = to_slack_mrkdwn(reply.text)

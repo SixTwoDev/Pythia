@@ -71,6 +71,87 @@ def test_format_thread_skips_message_that_is_only_a_bare_self_mention() -> None:
     assert format_thread(messages, BOT_USER_ID) == "<@UALICE>: first\n<@UCAROL>: second"
 
 
+def test_format_thread_pulls_text_from_legacy_attachments_when_top_level_text_is_empty() -> None:
+    # Webhooks (CI bots, monitoring integrations) routinely post a parent
+    # message with an empty `text` field and their real content in
+    # `attachments`. Without an attachments fallback, Pythia silently drops
+    # the parent and the @-mention reply has no context to answer against.
+    messages = [
+        {
+            "bot_id": "BCIBOT",
+            "text": "",
+            "attachments": [
+                {
+                    "fallback": "Deploy #42 failed on main",
+                    "title": "Deploy #42 failed",
+                    "text": "Build broke at step `pytest`",
+                    "fields": [
+                        {"title": "Branch", "value": "main"},
+                        {"title": "Duration", "value": "2m31s"},
+                    ],
+                }
+            ],
+        },
+        {"user": "UALICE", "text": f"<@{BOT_USER_ID}> why?"},
+    ]
+    formatted = format_thread(messages, BOT_USER_ID)
+    assert "Deploy #42 failed" in formatted
+    assert "Build broke at step `pytest`" in formatted
+    assert "Branch: main" in formatted
+    assert "<@UALICE>: why?" in formatted
+
+
+def test_format_thread_pulls_text_from_block_kit_blocks_when_top_level_text_is_empty() -> None:
+    # Modern apps (GitHub, PagerDuty, etc.) post via Block Kit and leave
+    # `text` empty. We need to walk the block tree and rebuild a readable
+    # message from any `text` nodes we find.
+    messages = [
+        {
+            "bot_id": "BGITHUB",
+            "text": "",
+            "blocks": [
+                {"type": "header", "text": {"type": "plain_text", "text": "PR #99 opened"}},
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "*Add new feature* by @alice"},
+                },
+                {
+                    "type": "context",
+                    "elements": [{"type": "mrkdwn", "text": "Repository: example/repo"}],
+                },
+            ],
+        },
+        {"user": "UBOB", "text": f"<@{BOT_USER_ID}> summarise"},
+    ]
+    formatted = format_thread(messages, BOT_USER_ID)
+    assert "PR #99 opened" in formatted
+    assert "Add new feature" in formatted
+    assert "Repository: example/repo" in formatted
+    assert "<@UBOB>: summarise" in formatted
+
+
+def test_format_thread_still_skips_message_with_no_text_no_blocks_no_attachments() -> None:
+    messages = [
+        {"user": "UALICE", "text": "kept"},
+        {"user": "UBOB"},  # truly content-less
+        {"user": "UCAROL", "text": "kept too"},
+    ]
+    assert format_thread(messages, BOT_USER_ID) == "<@UALICE>: kept\n<@UCAROL>: kept too"
+
+
+def test_format_thread_prefers_top_level_text_over_attachments_when_both_present() -> None:
+    # If an integration set BOTH `text` and `attachments`, the top-level
+    # text is the integration's own summary — don't double-render.
+    messages = [
+        {
+            "bot_id": "BCIBOT",
+            "text": "Deploy #42 failed on main",
+            "attachments": [{"fallback": "Deploy #42 failed on main"}],
+        }
+    ]
+    assert format_thread(messages, BOT_USER_ID) == "<@BCIBOT>: Deploy #42 failed on main"
+
+
 def test_format_thread_preserves_message_order() -> None:
     messages = [
         {"user": "UALICE", "text": "1"},

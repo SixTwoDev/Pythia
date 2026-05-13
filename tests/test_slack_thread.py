@@ -139,9 +139,9 @@ def test_format_thread_still_skips_message_with_no_text_no_blocks_no_attachments
     assert format_thread(messages, BOT_USER_ID) == "<@UALICE>: kept\n<@UCAROL>: kept too"
 
 
-def test_format_thread_prefers_top_level_text_over_attachments_when_both_present() -> None:
-    # If an integration set BOTH `text` and `attachments`, the top-level
-    # text is the integration's own summary — don't double-render.
+def test_format_thread_dedups_when_top_level_text_exactly_matches_an_attachment_fallback() -> None:
+    # Many integrations set BOTH `text` and `attachments.fallback` to the
+    # same summary string. Render it once, not twice.
     messages = [
         {
             "bot_id": "BCIBOT",
@@ -150,6 +150,35 @@ def test_format_thread_prefers_top_level_text_over_attachments_when_both_present
         }
     ]
     assert format_thread(messages, BOT_USER_ID) == "<@BCIBOT>: Deploy #42 failed on main"
+
+
+def test_format_thread_concatenates_text_blocks_and_attachments_when_each_adds_signal() -> None:
+    # An integration can put a short headline in `text`, rich rendering
+    # in `blocks`, and a structured fallback in `attachments` — each
+    # carries information the others don't, so render all three.
+    messages = [
+        {
+            "bot_id": "BCIBOT",
+            "text": "Deploy failed",
+            "blocks": [
+                {
+                    "type": "section",
+                    "text": {"type": "mrkdwn", "text": "Step `pytest` exited 1"},
+                },
+            ],
+            "attachments": [
+                {
+                    "fallback": "Deploy #42 on main",
+                    "fields": [{"title": "Duration", "value": "2m31s"}],
+                },
+            ],
+        }
+    ]
+    formatted = format_thread(messages, BOT_USER_ID)
+    assert "Deploy failed" in formatted
+    assert "Step `pytest` exited 1" in formatted
+    assert "Deploy #42 on main" in formatted
+    assert "Duration: 2m31s" in formatted
 
 
 def test_format_thread_preserves_message_order() -> None:

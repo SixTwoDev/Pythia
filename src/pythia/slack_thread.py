@@ -26,10 +26,106 @@ def _strip_self_mention(text: str, bot_user_id: str) -> str:
     return re.sub(pattern, "", text).strip()
 
 
+def _extract_blocks_text(blocks: list[Any]) -> str:
+    """Pull rendered text out of Slack Block Kit blocks.
+
+    App and webhook messages routinely leave the top-level `text` field
+    empty and put the real content in `blocks` — without a fallback we
+    silently drop the entire message before the model sees it. We walk
+    the block tree and collect every string under any `text` key, which
+    covers section/header/context/rich_text and the common nested shapes
+    without needing to enumerate every block type Slack might add.
+    """
+    parts: list[str] = []
+
+    def walk(node: object) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if key == "text":
+                    if isinstance(value, str):
+                        parts.append(value)
+                    elif isinstance(value, dict):
+                        inner = value.get("text")
+                        if isinstance(inner, str):
+                            parts.append(inner)
+                        else:
+                            walk(value)
+                    else:
+                        walk(value)
+                else:
+                    walk(value)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(blocks)
+    return " ".join(p.strip() for p in parts if p and p.strip())
+
+
+def _extract_attachments_text(attachments: list[Any]) -> str:
+    """Pull readable text out of legacy `attachments` blobs.
+
+    `fallback` is Slack's own "best-effort plain-text rendering" of an
+    attachment and is set by virtually every integration, so we try it
+    first; we then fold in pretext/title/text/fields for any extra
+    signal the integration provided.
+    """
+    parts: list[str] = []
+    for attachment in attachments:
+        if not isinstance(attachment, dict):
+            continue
+        for key in ("pretext", "title", "text", "fallback"):
+            value = attachment.get(key)
+            if isinstance(value, str) and value.strip():
+                parts.append(value.strip())
+        for field in attachment.get("fields") or []:
+            if not isinstance(field, dict):
+                continue
+            title = (field.get("title") or "").strip()
+            value = (field.get("value") or "").strip()
+            if title and value:
+                parts.append(f"{title}: {value}")
+            elif value:
+                parts.append(value)
+    return "\n".join(parts)
+
+
+def _message_text(message: dict[str, Any], bot_user_id: str) -> str:
+    """Build a full readable rendering of a Slack message.
+
+    Pulls text from every source the message exposes — top-level `text`,
+    Block Kit `blocks`, and legacy `attachments` — and concatenates them.
+    Integrations vary wildly: a CI bot might put a one-line summary in
+    `text` and the real detail in `attachments`; another might leave
+    `text` empty and put everything in `blocks`. Reading every source
+    means we never silently drop content the user can see in Slack.
+    Exact duplicates between sources (e.g. `text` matching an
+    attachment's `fallback`) are de-duplicated so we don't render the
+    same line twice.
+    """
+    parts: list[str] = []
+    raw_text = (message.get("text") or "").strip()
+    if raw_text:
+        parts.append(raw_text)
+    blocks_text = _extract_blocks_text(message.get("blocks") or [])
+    if blocks_text:
+        parts.append(blocks_text)
+    attachments_text = _extract_attachments_text(message.get("attachments") or [])
+    if attachments_text:
+        parts.append(attachments_text)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for part in parts:
+        if part not in seen:
+            seen.add(part)
+            deduped.append(part)
+    return _strip_self_mention("\n".join(deduped), bot_user_id)
+
+
 def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:
     lines: list[str] = []
     for message in messages:
-        text = _strip_self_mention((message.get("text") or "").strip(), bot_user_id)
+        text = _message_text(message, bot_user_id)
         files = message.get("files") or []
         if not text and not files:
             continue

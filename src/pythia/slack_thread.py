@@ -91,22 +91,35 @@ def _extract_attachments_text(attachments: list[Any]) -> str:
 
 
 def _message_text(message: dict[str, Any], bot_user_id: str) -> str:
-    """Extract the most readable text representation of a Slack message.
+    """Build a full readable rendering of a Slack message.
 
-    Tries `text` first (the common case), then falls back to walking
-    `blocks` and finally `attachments` — many app/webhook posts leave
-    the top-level `text` empty and put their content in those richer
-    fields. Self-mentions to the bot are stripped throughout because
-    the model has no way to know its own Slack user-ID.
+    Pulls text from every source the message exposes — top-level `text`,
+    Block Kit `blocks`, and legacy `attachments` — and concatenates them.
+    Integrations vary wildly: a CI bot might put a one-line summary in
+    `text` and the real detail in `attachments`; another might leave
+    `text` empty and put everything in `blocks`. Reading every source
+    means we never silently drop content the user can see in Slack.
+    Exact duplicates between sources (e.g. `text` matching an
+    attachment's `fallback`) are de-duplicated so we don't render the
+    same line twice.
     """
-    text = _strip_self_mention((message.get("text") or "").strip(), bot_user_id)
-    if text:
-        return text
-    text = _extract_blocks_text(message.get("blocks") or [])
-    if text:
-        return _strip_self_mention(text, bot_user_id)
-    text = _extract_attachments_text(message.get("attachments") or [])
-    return _strip_self_mention(text, bot_user_id) if text else ""
+    parts: list[str] = []
+    raw_text = (message.get("text") or "").strip()
+    if raw_text:
+        parts.append(raw_text)
+    blocks_text = _extract_blocks_text(message.get("blocks") or [])
+    if blocks_text:
+        parts.append(blocks_text)
+    attachments_text = _extract_attachments_text(message.get("attachments") or [])
+    if attachments_text:
+        parts.append(attachments_text)
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for part in parts:
+        if part not in seen:
+            seen.add(part)
+            deduped.append(part)
+    return _strip_self_mention("\n".join(deduped), bot_user_id)
 
 
 def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:

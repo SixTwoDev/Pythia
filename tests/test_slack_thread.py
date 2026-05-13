@@ -198,15 +198,19 @@ def test_format_thread_prefixes_each_line_with_the_messages_iso_timestamp() -> N
 def test_format_thread_skips_timestamp_prefix_when_ts_is_missing_or_malformed() -> None:
     # Synthetic test data can omit `ts`; production never does. Tolerate it
     # by rendering the line without a prefix rather than producing a
-    # nonsense `[invalid] <@user>:` line.
+    # nonsense `[invalid] <@user>:` line. Out-of-range numeric ts values
+    # (e.g. "1e30") parse cleanly through float() but blow up datetime —
+    # they take the same skip-prefix path.
     messages = [
         {"user": "UALICE", "text": "no ts"},
         {"user": "UBOB", "text": "garbage ts", "ts": "not-a-number"},
+        {"user": "UDAVE", "text": "overflow ts", "ts": "1e30"},
         {"user": "UCAROL", "text": "good ts", "ts": "1747166400"},
     ]
     formatted = format_thread(messages, BOT_USER_ID)
     assert "<@UALICE>: no ts" in formatted
     assert "<@UBOB>: garbage ts" in formatted
+    assert "<@UDAVE>: overflow ts" in formatted
     assert "[2025-05-13T20:00:00Z] <@UCAROL>: good ts" in formatted
 
 

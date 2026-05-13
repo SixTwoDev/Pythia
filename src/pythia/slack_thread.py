@@ -135,9 +135,13 @@ def _ts_to_iso(ts: Any) -> str:
         return ""
     try:
         seconds = float(ts)
-    except ValueError:
+        return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (ValueError, OverflowError, OSError):
+        # ValueError: non-numeric `ts`. OverflowError/OSError:
+        # `float()` succeeded but the value is outside the platform's
+        # representable datetime range (e.g. fuzzed "1e30"). Real Slack
+        # ts values are ~1.7e9, so this only fires on synthetic input.
         return ""
-    return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:

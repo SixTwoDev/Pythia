@@ -1,4 +1,5 @@
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from slack_sdk.web.async_client import AsyncWebClient
@@ -122,6 +123,27 @@ def _message_text(message: dict[str, Any], bot_user_id: str) -> str:
     return _strip_self_mention("\n".join(deduped), bot_user_id)
 
 
+def _ts_to_iso(ts: Any) -> str:
+    """Convert a Slack message `ts` ("1234567890.123456") to ISO-8601 UTC.
+
+    Returns "" for missing or malformed values so callers can render
+    timestamp-prefixed lines unconditionally when present and skip the
+    prefix when absent (only really happens in synthetic test data —
+    real Slack messages always carry `ts`).
+    """
+    if not isinstance(ts, str) or not ts:
+        return ""
+    try:
+        seconds = float(ts)
+        return datetime.fromtimestamp(seconds, tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (ValueError, OverflowError, OSError):
+        # ValueError: non-numeric `ts`. OverflowError/OSError:
+        # `float()` succeeded but the value is outside the platform's
+        # representable datetime range (e.g. fuzzed "1e30"). Real Slack
+        # ts values are ~1.7e9, so this only fires on synthetic input.
+        return ""
+
+
 def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:
     lines: list[str] = []
     for message in messages:
@@ -131,9 +153,13 @@ def format_thread(messages: list[dict[str, Any]], bot_user_id: str) -> str:
             continue
         user = message.get("user") or message.get("bot_id") or "unknown"
         speaker = "pythia" if user == bot_user_id else f"<@{user}>"
-        line = f"{speaker}: {text}".rstrip()
+        when = _ts_to_iso(message.get("ts"))
+        prefix = f"[{when}] " if when else ""
+        line = f"{prefix}{speaker}: {text}".rstrip()
         if files:
             names = ", ".join(str(f.get("name") or "?") for f in files)
-            line = f"{line} [attached: {names}]" if text else f"{speaker}: [attached: {names}]"
+            line = (
+                f"{line} [attached: {names}]" if text else f"{prefix}{speaker}: [attached: {names}]"
+            )
         lines.append(line)
     return "\n".join(lines)

@@ -7,6 +7,9 @@ from pythia.agent import ToolCall
 from pythia.app import (
     ACTION_HIDE_TOOL_TRACE,
     ACTION_SHOW_TOOL_TRACE,
+    DISALLOWED_CHANNEL_REPLY,
+    DISCLAIMER_BLOCK_ID,
+    DISCLAIMER_TEXT,
     ERROR_REPLY,
     PLACEHOLDER_REPLY,
     TRACE_ACTIONS_BLOCK_ID,
@@ -75,9 +78,11 @@ async def test_respond_posts_placeholder_then_updates_with_the_real_answer() -> 
     assert update_kwargs["channel"] == "C9"
     assert update_kwargs["ts"] == "200.5"
     assert update_kwargs["text"] == "found it: *PROD-123*"  # mrkdwn-converted
-    # No tool calls -> only the section block, no actions button
-    assert len(update_kwargs["blocks"]) == 1
-    assert update_kwargs["blocks"][0]["type"] == "section"
+    # No tool calls -> section block for the answer + context block for the disclaimer.
+    blocks = update_kwargs["blocks"]
+    assert len(blocks) == 2
+    assert blocks[0]["type"] == "section"
+    assert blocks[1]["block_id"] == DISCLAIMER_BLOCK_ID
 
 
 @pytest.mark.asyncio
@@ -133,10 +138,23 @@ async def test_respond_aborts_silently_when_placeholder_post_fails() -> None:
 # --- reply_blocks -----------------------------------------------------------
 
 
+def _section_blocks(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [b for b in blocks if b["type"] == "section"]
+
+
 def test_reply_blocks_omits_button_when_no_tool_calls_were_made() -> None:
     blocks = reply_blocks("the answer", [])
-    assert len(blocks) == 1
+    # one section for the answer + one context block for the disclaimer
+    assert len(blocks) == 2
     assert blocks[0]["type"] == "section"
+    assert blocks[1]["block_id"] == DISCLAIMER_BLOCK_ID
+
+
+def test_reply_blocks_always_appends_disclaimer_context_block() -> None:
+    blocks = reply_blocks("the answer", [])
+    disclaimer = next(b for b in blocks if b.get("block_id") == DISCLAIMER_BLOCK_ID)
+    assert disclaimer["type"] == "context"
+    assert disclaimer["elements"][0]["text"] == DISCLAIMER_TEXT
 
 
 def test_reply_blocks_chunks_long_text_under_the_3000_char_section_limit() -> None:
@@ -146,9 +164,9 @@ def test_reply_blocks_chunks_long_text_under_the_3000_char_section_limit() -> No
         + ("paragraph three. " * 250)
     )
     blocks = reply_blocks(text, [])
-    assert len(blocks) > 1, "long text should be split across multiple section blocks"
-    for block in blocks:
-        assert block["type"] == "section"
+    sections = _section_blocks(blocks)
+    assert len(sections) > 1, "long text should be split across multiple section blocks"
+    for block in sections:
         assert len(block["text"]["text"]) <= 3000, "every section must fit Slack's 3000-char cap"
 
 
@@ -157,7 +175,7 @@ def test_reply_blocks_preserves_significant_whitespace_when_hard_splitting() -> 
     # original character must survive the split.
     text = "a" * 5000 + "\n    indented_code_should_keep_its_leading_spaces"
     blocks = reply_blocks(text, [])
-    rejoined = "".join(b["text"]["text"] for b in blocks)
+    rejoined = "".join(b["text"]["text"] for b in _section_blocks(blocks))
     assert rejoined == text, "hard-cut chunks must concatenate back to the original"
 
 
@@ -169,9 +187,10 @@ def test_reply_blocks_drops_only_the_paragraph_delimiter_at_a_clean_split() -> N
     para_b = "beta-paragraph-content-without-spaces" * 40
     text = para_a + "\n\n" + para_b
     blocks = reply_blocks(text, [])
-    assert len(blocks) == 2
-    assert blocks[0]["text"]["text"] == para_a
-    assert blocks[1]["text"]["text"] == para_b
+    sections = _section_blocks(blocks)
+    assert len(sections) == 2
+    assert sections[0]["text"]["text"] == para_a
+    assert sections[1]["text"]["text"] == para_b
 
 
 def test_reply_blocks_appends_show_button_when_tool_calls_present() -> None:
@@ -180,10 +199,12 @@ def test_reply_blocks_appends_show_button_when_tool_calls_present() -> None:
         ToolCall(name="read_file", args='{"path": "agent.py"}'),
     ]
     blocks = reply_blocks("the answer", calls)
-    assert len(blocks) == 2
+    # section + disclaimer + actions (show button)
+    assert len(blocks) == 3
     assert blocks[0]["type"] == "section"
-    assert blocks[1]["type"] == "actions"
-    button = blocks[1]["elements"][0]
+    assert blocks[1]["block_id"] == DISCLAIMER_BLOCK_ID
+    assert blocks[2]["type"] == "actions"
+    button = blocks[2]["elements"][0]
     assert button["action_id"] == ACTION_SHOW_TOOL_TRACE
     assert button["text"]["text"] == "Show 2 tool call(s)"
     # Trace text contains both calls, one per line.
@@ -206,7 +227,7 @@ def _click_body(action_id: str, value: str, blocks: list[dict[str, Any]]) -> dic
 @pytest.mark.asyncio
 async def test_expand_appends_trace_section_and_swaps_button_to_hide() -> None:
     initial = reply_blocks("the answer", [ToolCall(name="search_code", args='{"q": "x"}')])
-    show_button = initial[1]
+    show_button = next(b for b in initial if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
     trace_value = show_button["elements"][0]["value"]
     body = _click_body(ACTION_SHOW_TOOL_TRACE, trace_value, initial)
     client = AsyncMock()
@@ -218,6 +239,7 @@ async def test_expand_appends_trace_section_and_swaps_button_to_hide() -> None:
     block_ids = [b.get("block_id") for b in new_blocks]
     assert TRACE_BLOCK_ID in block_ids
     assert TRACE_ACTIONS_BLOCK_ID in block_ids
+    assert DISCLAIMER_BLOCK_ID in block_ids, "disclaimer must survive expand/collapse"
     trace_block = next(b for b in new_blocks if b.get("block_id") == TRACE_BLOCK_ID)
     assert "search_code(" in trace_block["text"]["text"]
     actions_block = next(b for b in new_blocks if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
@@ -227,10 +249,13 @@ async def test_expand_appends_trace_section_and_swaps_button_to_hide() -> None:
 @pytest.mark.asyncio
 async def test_collapse_removes_trace_section_and_swaps_button_to_show() -> None:
     initial = reply_blocks("the answer", [ToolCall(name="search_code", args='{"q": "x"}')])
-    show_value = initial[1]["elements"][0]["value"]
-    # Simulate the post-expand state: section, trace section, hide button.
+    show_button = next(b for b in initial if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
+    show_value = show_button["elements"][0]["value"]
+    disclaimer = next(b for b in initial if b.get("block_id") == DISCLAIMER_BLOCK_ID)
+    # Simulate the post-expand state: answer section, disclaimer, trace section, hide button.
     expanded_blocks = [
         initial[0],
+        disclaimer,
         {
             "type": "section",
             "block_id": TRACE_BLOCK_ID,
@@ -259,6 +284,7 @@ async def test_collapse_removes_trace_section_and_swaps_button_to_show() -> None
     block_ids = [b.get("block_id") for b in new_blocks]
     assert TRACE_BLOCK_ID not in block_ids
     assert TRACE_ACTIONS_BLOCK_ID in block_ids
+    assert DISCLAIMER_BLOCK_ID in block_ids, "disclaimer must survive expand/collapse"
     actions_block = next(b for b in new_blocks if b.get("block_id") == TRACE_ACTIONS_BLOCK_ID)
     assert actions_block["elements"][0]["action_id"] == ACTION_SHOW_TOOL_TRACE
 
@@ -280,7 +306,7 @@ def test_parse_allowed_channels_returns_empty_set_for_empty_string() -> None:
 
 
 @pytest.mark.asyncio
-async def test_respond_ignores_mention_in_disallowed_channel() -> None:
+async def test_respond_posts_short_notice_in_disallowed_channel_then_skips_the_llm() -> None:
     client = AsyncMock()
     say = AsyncMock()
     event = {"channel": "C-OFFLIMITS", "ts": "100.0"}
@@ -295,8 +321,54 @@ async def test_respond_ignores_mention_in_disallowed_channel() -> None:
         allowed_channels=frozenset({"C-OK"}),
     )
 
+    say.assert_awaited_once_with(text=DISALLOWED_CHANNEL_REPLY, thread_ts="100.0")
+    client.chat_update.assert_not_awaited()
+    client.conversations_replies.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_respond_stays_silent_when_allowlist_is_empty_kill_switch() -> None:
+    # frozenset() means "operator explicitly muted the bot" — different from
+    # a populated allowlist. We don't want a denial post in every channel
+    # someone mentions us in; that would defeat the kill-switch.
+    client = AsyncMock()
+    say = AsyncMock()
+    event = {"channel": "C-ANYWHERE", "ts": "100.0"}
+
+    await respond_to_mention(
+        AsyncMock(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset(),
+    )
+
     say.assert_not_awaited()
     client.chat_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_respond_swallows_say_failure_in_disallowed_channel_without_raising() -> None:
+    # If posting the denial notice fails (e.g. we lack chat:write in the
+    # channel), log and move on — we still must not call the LLM.
+    client = AsyncMock()
+    say = AsyncMock(side_effect=RuntimeError("permission denied"))
+    event = {"channel": "C-OFFLIMITS", "ts": "100.0"}
+
+    await respond_to_mention(
+        AsyncMock(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset({"C-OK"}),
+    )
+
+    client.chat_update.assert_not_awaited()
+    client.conversations_replies.assert_not_awaited()
 
 
 @pytest.mark.asyncio

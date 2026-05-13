@@ -181,6 +181,39 @@ def test_format_thread_concatenates_text_blocks_and_attachments_when_each_adds_s
     assert "Duration: 2m31s" in formatted
 
 
+def test_format_thread_prefixes_each_line_with_the_messages_iso_timestamp() -> None:
+    # Real Slack messages always carry `ts` (seconds since epoch). Surface
+    # it to the model in ISO-8601 UTC so triage questions like "what happened
+    # right before the deploy at 14:00 UTC?" can use timestamps as anchors.
+    messages = [
+        {"user": "UALICE", "text": "deploy started", "ts": "1747166400.000100"},
+        {"user": "UALICE", "text": "deploy failed", "ts": "1747166460.000200"},
+    ]
+    assert format_thread(messages, BOT_USER_ID) == (
+        "[2025-05-13T20:00:00Z] <@UALICE>: deploy started\n"
+        "[2025-05-13T20:01:00Z] <@UALICE>: deploy failed"
+    )
+
+
+def test_format_thread_skips_timestamp_prefix_when_ts_is_missing_or_malformed() -> None:
+    # Synthetic test data can omit `ts`; production never does. Tolerate it
+    # by rendering the line without a prefix rather than producing a
+    # nonsense `[invalid] <@user>:` line. Out-of-range numeric ts values
+    # (e.g. "1e30") parse cleanly through float() but blow up datetime —
+    # they take the same skip-prefix path.
+    messages = [
+        {"user": "UALICE", "text": "no ts"},
+        {"user": "UBOB", "text": "garbage ts", "ts": "not-a-number"},
+        {"user": "UDAVE", "text": "overflow ts", "ts": "1e30"},
+        {"user": "UCAROL", "text": "good ts", "ts": "1747166400"},
+    ]
+    formatted = format_thread(messages, BOT_USER_ID)
+    assert "<@UALICE>: no ts" in formatted
+    assert "<@UBOB>: garbage ts" in formatted
+    assert "<@UDAVE>: overflow ts" in formatted
+    assert "[2025-05-13T20:00:00Z] <@UCAROL>: good ts" in formatted
+
+
 def test_format_thread_preserves_message_order() -> None:
     messages = [
         {"user": "UALICE", "text": "1"},

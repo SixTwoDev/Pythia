@@ -32,6 +32,8 @@ logger = logging.getLogger(__name__)
 
 PLACEHOLDER_REPLY = "_Pythia is thinking…_"
 ERROR_REPLY = "Sorry — I hit an error. Check the bot logs."
+DISCLAIMER_TEXT = "_Pythia is an AI agent and may make mistakes — always verify._"
+DISCLAIMER_BLOCK_ID = "pythia_disclaimer"
 
 
 def parse_allowed_channels(spec: str | None) -> frozenset[str] | None:
@@ -141,11 +143,20 @@ def _trace_block(trace: str) -> dict[str, Any]:
     }
 
 
+def _disclaimer_block() -> dict[str, Any]:
+    return {
+        "type": "context",
+        "block_id": DISCLAIMER_BLOCK_ID,
+        "elements": [{"type": "mrkdwn", "text": DISCLAIMER_TEXT}],
+    }
+
+
 def reply_blocks(text: str, tool_calls: list[ToolCall]) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = [
         {"type": "section", "text": {"type": "mrkdwn", "text": chunk}}
         for chunk in _chunk_for_sections(text)
     ]
+    blocks.append(_disclaimer_block())
     if tool_calls:
         trace = _truncate_trace(format_tool_trace(tool_calls))
         blocks.append(_show_button(trace, len(tool_calls)))

@@ -7,6 +7,7 @@ from pythia.agent import ToolCall
 from pythia.app import (
     ACTION_HIDE_TOOL_TRACE,
     ACTION_SHOW_TOOL_TRACE,
+    DISALLOWED_CHANNEL_REPLY,
     DISCLAIMER_BLOCK_ID,
     DISCLAIMER_TEXT,
     ERROR_REPLY,
@@ -305,7 +306,7 @@ def test_parse_allowed_channels_returns_empty_set_for_empty_string() -> None:
 
 
 @pytest.mark.asyncio
-async def test_respond_ignores_mention_in_disallowed_channel() -> None:
+async def test_respond_posts_short_notice_in_disallowed_channel_then_skips_the_llm() -> None:
     client = AsyncMock()
     say = AsyncMock()
     event = {"channel": "C-OFFLIMITS", "ts": "100.0"}
@@ -320,8 +321,54 @@ async def test_respond_ignores_mention_in_disallowed_channel() -> None:
         allowed_channels=frozenset({"C-OK"}),
     )
 
+    say.assert_awaited_once_with(text=DISALLOWED_CHANNEL_REPLY, thread_ts="100.0")
+    client.chat_update.assert_not_awaited()
+    client.conversations_replies.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_respond_stays_silent_when_allowlist_is_empty_kill_switch() -> None:
+    # frozenset() means "operator explicitly muted the bot" — different from
+    # a populated allowlist. We don't want a denial post in every channel
+    # someone mentions us in; that would defeat the kill-switch.
+    client = AsyncMock()
+    say = AsyncMock()
+    event = {"channel": "C-ANYWHERE", "ts": "100.0"}
+
+    await respond_to_mention(
+        AsyncMock(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset(),
+    )
+
     say.assert_not_awaited()
     client.chat_update.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_respond_swallows_say_failure_in_disallowed_channel_without_raising() -> None:
+    # If posting the denial notice fails (e.g. we lack chat:write in the
+    # channel), log and move on — we still must not call the LLM.
+    client = AsyncMock()
+    say = AsyncMock(side_effect=RuntimeError("permission denied"))
+    event = {"channel": "C-OFFLIMITS", "ts": "100.0"}
+
+    await respond_to_mention(
+        AsyncMock(),
+        client,
+        say,
+        BOT_USER_ID,
+        "xoxb-test",
+        event,
+        allowed_channels=frozenset({"C-OK"}),
+    )
+
+    client.chat_update.assert_not_awaited()
+    client.conversations_replies.assert_not_awaited()
 
 
 @pytest.mark.asyncio

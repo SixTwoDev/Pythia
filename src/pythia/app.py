@@ -32,6 +32,10 @@ logger = logging.getLogger(__name__)
 
 PLACEHOLDER_REPLY = "_Pythia is thinking…_"
 ERROR_REPLY = "Sorry — I hit an error. Check the bot logs."
+DISALLOWED_CHANNEL_REPLY = (
+    "Sorry — I'm not configured to respond in this channel. "
+    "Ask your operator to add it to `PYTHIA_ALLOWED_CHANNELS`."
+)
 DISCLAIMER_TEXT = "_Pythia is an AI agent and may make mistakes — always verify._"
 DISCLAIMER_BLOCK_ID = "pythia_disclaimer"
 
@@ -227,6 +231,15 @@ async def respond_to_mention(
 
     if allowed_channels is not None and channel not in allowed_channels:
         logger.info("ignoring mention in disallowed channel %s", channel)
+        # An empty allowlist is the "kill switch" — stay completely silent so
+        # an operator can use it to mute the bot. A non-empty allowlist is a
+        # real scoping decision, so post a one-line explanation in-thread
+        # rather than vanish and confuse the user who tagged us.
+        if allowed_channels:
+            try:
+                await say(text=DISALLOWED_CHANNEL_REPLY, thread_ts=thread_ts)
+            except Exception:
+                logger.exception("failed to post disallowed-channel notice in %s", channel)
         return
 
     try:
